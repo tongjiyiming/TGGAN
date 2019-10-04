@@ -14,14 +14,14 @@ class TemporalWalker:
     edges_times: real time of edges [time], shape: samples x 1
     """
 
-    def __init__(self, n_nodes, edges, t_plus,
+    def __init__(self, n_nodes, edges, t_end,
                  scale=0.1, rw_len=4, batch_size=8,
                  init_walk_method='uniform', isTeleport=False, isJump=False,
                  ):
         if edges.shape[1] != 4: raise Exception('edges must have shape: samples x 4')
 
         self.n_nodes = n_nodes
-        self.t_plus = t_plus
+        self.t_end = t_end
         self.edges_days = edges[:, [0]]
         self.edges = edges[:, [1, 2]]
         self.edges_times = edges[:, [3]]
@@ -41,20 +41,20 @@ class TemporalWalker:
     def walk(self):
         while True:
             yield temporal_random_walk(
-                self.n_nodes, self.edges_days, self.edges, self.edges_times, self.t_plus,
+                self.n_nodes, self.edges_days, self.edges, self.edges_times, self.t_end,
                 self.scale, self.rw_len, self.batch_size,
                 self.init_walk_method, self.isTeleport, self.isJump,
-            ).reshape(self.batch_size, -1)
+            )
 
 # @jit(nopython=True)
-def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_plus,
+def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_end,
                          scale, rw_len, batch_size,
                          init_walk_method, isTeleport, isJump
                          ):
     unique_days = np.unique(edges_days.reshape(1, -1)[0])
     walks = []
     start_node = None
-    end_node = n_nodes
+    end_node = None
     for _ in range(batch_size):
         # select a day with uniform distribution
         walk_day = np.random.choice(unique_days)
@@ -66,20 +66,13 @@ def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_plus,
         # select a start edge. and unbiased or biased to the starting edges
         n = walk_day_edges.shape[0]
 
-        probs = None
         if init_walk_method is 'uniform': probs = Uniform_Prob(n)
         elif init_walk_method is 'linear': probs = Linear_Prob(n)
         elif init_walk_method is 'exp': probs = Exp_Prob(n)
         else: raise Exception('wrong init_walk_method!')
 
-        start_walk_inx = np.random.choice(n, p=probs)
-
-        # check if it is start node
-        if start_walk_inx == 0: start_node = 1
-        else: start_node = 0
-
-        walk_day_edges = np.r_[walk_day_edges, [[walk_day_edges[-1, 1], end_node]]]
-        walk_day_times = np.r_[walk_day_times, [[t_plus]]]
+        if n == 1: start_walk_inx = 0
+        else: start_walk_inx = np.random.choice(n, p=probs)
 
         # choice nodes from start to walker lengths. if isTeleport: sample by the teleport probability
         # which allow sample a nearby nodes based on a small random teleport
@@ -92,29 +85,39 @@ def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_plus,
             raise Exception('isTeleport not implemented yet')
         else:
             selected_walks = walk_day_edges[start_walk_inx:start_walk_inx + rw_len]
-            seleted_times = walk_day_times[start_walk_inx:start_walk_inx + rw_len]
+            selected_times = walk_day_times[start_walk_inx:start_walk_inx + rw_len]
         if isJump:
             raise Exception('isJump not implemented yet')
 
-        # add end node and end waiting time \tau
-        # convert to waiting time \tau, except the first one
-        l = len(seleted_times)
-        while l > 1:
-            seleted_times[l-1, 0] = seleted_times[l-1, 0] - seleted_times[l-2, 0]
-            l -= 1
+        # get start residual time
+        if start_walk_inx == 0: t_res_0 = t_end
+        else:
+            # print('selected start:', selected_walks[0])
+            t_res_0 = t_end - walk_day_times[start_walk_inx-1, 0]
+
+        # convert to residual time \tau
+        res_times = t_end - selected_times
+
+        # # convert to edge index
+        # selected_walks = [nodes_to_edge(e[0], e[1], n_nodes) for e in selected_walks]
 
         # add a stop sign of -1
-        walks_mat = np.c_[selected_walks, seleted_times]
+        walks_mat = np.c_[selected_walks, res_times]
         if rw_len > len(selected_walks):
             n_stops = rw_len - len(selected_walks)
             walks_mat = np.r_[walks_mat, [[-1, -1, -1]] * n_stops]
 
-        # add the first row for replicated start_node binary
-        walks_mat = np.r_[[[start_node]*3], walks_mat]
+        # add start resdidual time
+        walks_mat = np.r_[[[t_res_0]*3], walks_mat]
 
         walks.append(walks_mat)
-
     return np.array(walks)
+
+def nodes_to_edge(v, u, N):
+    return v * N + u
+
+def edge_to_nodes(e, N):
+    return (e // N, e % N)
 
 def Split_Train_Test(edges, train_ratio):
     days = sorted(np.unique(edges[:, 0]))
@@ -229,19 +232,20 @@ if __name__ == '__main__':
     train_ratio = 0.9
 
     # random data from metro
-    file = 'data/metro_user_6.npz'
-    e = np.load(file)
-    edges = e['edges']
-    t_plus = 24
+    file = 'data/metro_user_4.txt'
+    edges = np.loadtxt(file)
+    print(edges)
+    t_end = 1.
     train_edges, test_edges = Split_Train_Test(edges, train_ratio)
     # print('train shape:', train_edges.shape)
     # print('test shape:', test_edges.shape)
-    walker = TemporalWalker(n_nodes, train_edges, t_plus,
+    walker = TemporalWalker(n_nodes, train_edges, t_end,
                             scale, rw_len, batch_size,
                             init_walk_method='exp',
                             )
+
     walks = walker.walk().__next__()
     print('walk length:', rw_len)
     print('walks shape:\n', walks.shape)
-    print('walks:\n', walks.reshape(batch_size, rw_len+1, 3))
+    print('walks:\n', walks)
 
