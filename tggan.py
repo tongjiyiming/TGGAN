@@ -498,10 +498,12 @@ class TGGAN:
             v_outputs = []
             t_outputs = []
 
-            def lstm_cell(lstm_size):
-                return tf.contrib.rnn.BasicLSTMCell(lstm_size, reuse=tf.get_variable_scope().reuse)
+            def lstm_cell(lstm_size, name):
+                return tf.contrib.rnn.BasicLSTMCell(lstm_size, reuse=tf.get_variable_scope().reuse, 
+                                                    name="Generator.{}".format(name))
 
-            self.stacked_lstm = tf.contrib.rnn.MultiRNNCell([lstm_cell(size) for size in self.G_layers])
+            self.stacked_lstm = tf.contrib.rnn.MultiRNNCell(
+                [lstm_cell(size, "lstm_{}".format(size)) for size in self.G_layers])
 
             # LSTM steps
             state = initial_states
@@ -539,9 +541,9 @@ class TGGAN:
                     #                                   reuse=reuse, activation=tf.nn.tanh,
                     #                                   initializer=tf.contrib.layers.xavier_initializer())
                     mu = tf.layers.dense(mu, 1, name="Generator.mu_tau_last", reuse=reuse,
-                                              activation=tf.nn.tanh, kernel_initializer=tf.contrib.layers.xavier_initializer())
+                                              activation=tf.nn.sigmoid, kernel_initializer=tf.contrib.layers.xavier_initializer())
                     sigma = tf.layers.dense(sigma, 1, name="Generator.sigma_tau_last", reuse=reuse,
-                                                 activation=tf.nn.tanh, kernel_initializer=tf.contrib.layers.xavier_initializer())
+                                                 activation=tf.nn.sigmoid, kernel_initializer=tf.contrib.layers.xavier_initializer())
                     # tau = self.var_decoder(mu_start, sigma_start)
                     tau = tf.truncated_normal([self.batch_size,], mean=mu, stddev=sigma)
                 else:
@@ -799,11 +801,11 @@ class TGGAN:
                     ax_real = ax[i, 0]
                     ax_real.hist(real_times, range=[-0.5, 1.5], bins=200)
                     ax_real.set_title('start node: {}'.format(int(e)))
-                    if i > 0: ax_real.set_xticklabels([])
+                    # if i > 0: ax_real.set_xticklabels([])
                     ax_fake = ax[i, 1]
                     ax_fake.hist(fake_times, range=[-0.5, 1.5], bins=200)
                     ax_fake.set_title('start node: {}'.format(int(e)))
-                    if i > 0: ax_fake.set_xticklabels([])
+                    # if i > 0: ax_fake.set_xticklabels([])
                 plt.tight_layout()
                 plt.savefig('{}/iter_{}_validation.png'.format(output_directory, _it+1))
                 plt.close()
@@ -864,8 +866,8 @@ class TGGAN:
                 plt.close()
 
         log("**** Training completed after {} iterations. ****".format(_it+1))
-        plt.plot(disc_losses[0::], label="Critic loss")
-        plt.plot(gen_losses[0::], label="Generator loss")
+        plt.plot(disc_losses[1000::], label="Critic loss")
+        plt.plot(gen_losses[1000::], label="Generator loss")
         plt.legend()
         plt.savefig('{}/{}_loss_res_final.png'.format(output_directory, timestr))
         plt.close()

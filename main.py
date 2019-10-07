@@ -44,10 +44,10 @@ def main(args):
         n_nodes = 91
         scale = 0.1
         rw_len = args.rw_len
-        batch_size = 32
-        train_ratio = 0.8
+        batch_size = 16
+        train_ratio = 0.9
         t_end = 1.
-        embedding_size = 32
+        embedding_size = 64
         gpu_id = 0
 
         lr = args.learningrate
