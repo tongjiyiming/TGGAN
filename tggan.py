@@ -356,11 +356,11 @@ class TGGAN:
             input_reshape = tf.concat([v_input_reshape, t_inputs], axis=2)
             inputs = tf.unstack(input_reshape, axis=1)
 
-            output_disc, state_disc = tf.nn.static_rnn(cell=disc_lstm_cell,
-                                                        inputs=inputs,
-                                                        dtype='float32',
-                                                        sequence_length=lengths,
-                                                        )
+            output_disc, state_disc = tf.contrib.rnn.static_rnn(cell=disc_lstm_cell,
+                                                                inputs=inputs,
+                                                                dtype='float32',
+                                                                sequence_length=lengths,
+                                                                )
 
             last_output = output_disc[-1]
             # last_output = tf.concat([last_output, t0_input], axis=1)
@@ -533,22 +533,19 @@ class TGGAN:
                 if decoder:
                     mu = inputs
                     sigma = inputs
-                    # for ix, size in enumerate(self.G_t_layers):
-                    #     mu = tf.layers.dense(mu, size, name="Generator.mu_tau_{}".format(ix),
-                    #                                reuse=reuse, activation=tf.nn.tanh,
-                    #                                initializer=tf.contrib.layers.xavier_initializer())
-                    #     sigma = tf.layers.dense(sigma, size, name="Generator.sigma_tau_{}".format(ix),
-                    #                                   reuse=reuse, activation=tf.nn.tanh,
-                    #                                   initializer=tf.contrib.layers.xavier_initializer())
-                    mu = tf.layers.dense(mu, 1, name="Generator.mu_tau_last", reuse=reuse,
-                                              activation=tf.nn.sigmoid, kernel_initializer=tf.contrib.layers.xavier_initializer())
-                    sigma = tf.layers.dense(sigma, 1, name="Generator.sigma_tau_last", reuse=reuse,
-                                                 activation=tf.nn.sigmoid, kernel_initializer=tf.contrib.layers.xavier_initializer())
+                    for ix, size in enumerate(self.G_t_layers):
+                        mu = tf.layers.dense(mu, size, name="Generator.mu_tau_{}".format(ix),
+                                                   reuse=reuse, activation=tf.nn.tanh,
+                                                   kernel_initializer=tf.contrib.layers.xavier_initializer())
+                        sigma = tf.layers.dense(sigma, size, name="Generator.sigma_tau_{}".format(ix),
+                                                      reuse=reuse, activation=tf.nn.tanh,
+                                                      kernel_initializer=tf.contrib.layers.xavier_initializer())
+                    mu = tf.layers.dense(mu, 1, name="Generator.mu_tau_last", reuse=reuse, activation=None)
+                    sigma = tf.layers.dense(sigma, 1, name="Generator.sigma_tau_last", reuse=reuse, activation=None)
                     # tau = self.var_decoder(mu_start, sigma_start)
-                    tau = tf.truncated_normal([self.batch_size,], mean=mu, stddev=sigma)
+                    tau = tf.random_normal([self.batch_size,], mean=mu, stddev=sigma)
                 else:
-                    tau = tf.layers.dense(initial_states_noise, 1, name="Generator.tau_decoder", reuse=reuse,
-                                                      activation=tf.nn.sigmoid, kernel_initializer=tf.contrib.layers.xavier_initializer())
+                    tau = tf.layers.dense(initial_states_noise, 1, name="Generator.tau_decoder", reuse=reuse, activation=None)
                 t_outputs.append(tau)
 
                 # if i == 0: t_outputs.append(tau)
