@@ -35,72 +35,6 @@ def main(args):
         data_sim = simulation(n_nodes, n_times, prob, simProcess)
         log('simulated data : {}'.format(data_sim))
 
-    if dataset_name == 'metro':
-        log('use metro data')
-        tf.compat.v1.reset_default_graph()
-
-        log('-'*40)
-
-        n_nodes = 91
-        scale = 0.1
-        rw_len = args.rw_len
-        batch_size = 32
-        train_ratio = 0.9
-        t_end = 1.
-        embedding_size = 64
-        gpu_id = 0
-
-        lr = args.learningrate
-        continue_training = args.continueTraining
-
-        # random data from metro
-        userid = args.userid
-        file = args.file
-        edges = np.loadtxt(file)
-        train_edges, test_edges = Split_Train_Test(edges, train_ratio)
-
-        walker = TemporalWalker(n_nodes, train_edges, t_end,
-                                scale, rw_len, batch_size,
-                                init_walk_method='uniform',
-                                )
-
-        tggan = TGGAN(N=n_nodes, rw_len=rw_len,
-                      t_end=t_end,
-                      walk_generator=walker.walk, batch_size=batch_size, gpu_id=gpu_id,
-                      use_gumbel=True,
-                      disc_iters=3,
-                      W_down_discriminator_size=embedding_size,
-                      W_down_generator_size=embedding_size,
-                      l2_penalty_generator=1e-7,
-                      l2_penalty_discriminator=5e-5,
-                      generator_start_layers=[20, 10],
-                      generator_layers=[50, 10],
-                      discriminator_layers=[40, 10],
-                      temp_start=5,
-                      learning_rate=lr,
-                      )
-
-        max_iters = 100000
-        eval_every = 5000
-        plot_every = 5000
-        n_eval_loop = 1
-        transitions_per_iter = batch_size * n_eval_loop
-        eval_transitions = transitions_per_iter * 1000
-        model_name = 'metro-user-{}'.format(userid)
-        save_directory = "snapshots-user-{}".format(userid)
-        output_directory='outputs-user-{}'.format(userid)
-
-        log_dict = tggan.train(n_eval_loop=n_eval_loop,
-                               stopping=None,
-                               transitions_per_iter=transitions_per_iter, eval_transitions=eval_transitions,
-                               eval_every=eval_every, plot_every=plot_every,
-                               max_patience=20, max_iters=max_iters,
-                               model_name=model_name,
-                               save_directory=save_directory,
-                               output_directory=output_directory,
-                               )
-        log('-'*40)
-
     if dataset_name == 'auth':
         log('use auth data')
         tf.compat.v1.reset_default_graph()
@@ -117,7 +51,9 @@ def main(args):
         gpu_id = 0
 
         lr = args.learningrate
-        use_wgan = args.wgan
+        continue_training = args.continueTraining
+        use_wgan = args.use_wgan
+        use_beta = args.use_beta
 
         # random data from metro
         userid = args.userid
@@ -146,6 +82,7 @@ def main(args):
                       temp_start=5,
                       learning_rate=lr,
                       use_wgan=use_wgan,
+                      use_beta=use_beta,
                       )
 
         max_iters = 100000
@@ -169,6 +106,76 @@ def main(args):
                                )
         log('-'*40)
     log('end model')
+
+    if dataset_name == 'metro':
+        log('use metro data')
+        tf.compat.v1.reset_default_graph()
+
+        log('-'*40)
+
+        n_nodes = 91
+        scale = 0.1
+        rw_len = args.rw_len
+        batch_size = 32
+        train_ratio = 0.9
+        t_end = 1.
+        embedding_size = 64
+        gpu_id = 0
+
+        lr = args.learningrate
+        continue_training = args.continueTraining
+        use_wgan = args.use_wgan
+        use_beta = args.use_beta
+
+        # random data from metro
+        userid = args.userid
+        file = args.file
+        edges = np.loadtxt(file)
+        train_edges, test_edges = Split_Train_Test(edges, train_ratio)
+
+        walker = TemporalWalker(n_nodes, train_edges, t_end,
+                                scale, rw_len, batch_size,
+                                init_walk_method='uniform',
+                                )
+
+        tggan = TGGAN(N=n_nodes, rw_len=rw_len,
+                      t_end=t_end,
+                      walk_generator=walker.walk, batch_size=batch_size, gpu_id=gpu_id,
+                      use_gumbel=True,
+                      disc_iters=3,
+                      W_down_discriminator_size=embedding_size,
+                      W_down_generator_size=embedding_size,
+                      l2_penalty_generator=1e-7,
+                      l2_penalty_discriminator=5e-5,
+                      generator_start_layers=[20, 10],
+                      generator_layers=[50, 10],
+                      discriminator_layers=[40, 10],
+                      temp_start=5,
+                      learning_rate=lr,
+                      use_wgan=use_wgan,
+                      use_beta=use_beta,
+                      )
+
+        max_iters = 100000
+        eval_every = 5000
+        plot_every = 5000
+        n_eval_loop = 1
+        transitions_per_iter = batch_size * n_eval_loop
+        eval_transitions = transitions_per_iter * 1000
+        model_name = 'metro-user-{}'.format(userid)
+        save_directory = "snapshots-user-{}".format(userid)
+        output_directory='outputs-user-{}'.format(userid)
+
+        log_dict = tggan.train(n_eval_loop=n_eval_loop,
+                               stopping=None,
+                               transitions_per_iter=transitions_per_iter, eval_transitions=eval_transitions,
+                               eval_every=eval_every, plot_every=plot_every,
+                               max_patience=20, max_iters=max_iters,
+                               model_name=model_name,
+                               save_directory=save_directory,
+                               output_directory=output_directory,
+                               )
+        log('-'*40)
     return
 
 if __name__ == '__main__':
@@ -209,6 +216,8 @@ if __name__ == '__main__':
     parser.add_argument("-lr", "--learningrate", default=0.00003, type=float,
                         help="if this run should run all evaluations")
     parser.add_argument("-uw", "--use_wgan", default=False, type=bool,
+                        help="if use WGAN loss function")
+    parser.add_argument("-ub", "--use_beta", default=False, type=bool,
                         help="if use WGAN loss function")
     parser.add_argument("-ct", "--continueTraining", default=False, type=bool,
                         help="if this run is restored from a corrupted run")

@@ -74,7 +74,7 @@ class TGGAN:
                  batch_size=128, noise_dim=16,
                  noise_type="Gaussian", learning_rate=0.0003, disc_iters=3, wasserstein_penalty=10,
                  l2_penalty_generator=1e-7, l2_penalty_discriminator=5e-5, temp_start=5.0, min_temperature=0.5,
-                 temperature_decay=1 - 5e-5, seed=15, gpu_id=0, use_gumbel=True, use_wgan=False,
+                 temperature_decay=1 - 5e-5, seed=15, gpu_id=0, use_gumbel=True, use_wgan=False, use_beta=False,
                  legacy_generator=False, wgan=False):
         """
         Initialize NetGAN.
@@ -151,6 +151,7 @@ class TGGAN:
             'temperature_decay': temperature_decay,
             'disc_iters': disc_iters,
             'use_gumbel': use_gumbel,
+            'use_beta': use_beta,
             'use_wgan': use_wgan,
             'legacy_generator': legacy_generator
         }
@@ -533,19 +534,33 @@ class TGGAN:
                 # generate \tau with decoder sampling
 
                 if decoder:
-                    loc = inputs
-                    scale = inputs
-                    for ix, size in enumerate(self.G_t_layers):
-                        loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
-                                              reuse=reuse, activation=tf.nn.tanh,
-                                              kernel_initializer=tf.contrib.layers.xavier_initializer())
-                        scale = tf.layers.dense(scale, size, name="Generator.scale_tau_{}".format(ix),
-                                                reuse=reuse, activation=tf.nn.tanh,
-                                                kernel_initializer=tf.contrib.layers.xavier_initializer())
-                    loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", reuse=reuse, activation=None)
-                    scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", reuse=reuse, activation=None)
-                    tau = [tf.random_normal([1], mean=loc[i, 0], stddev=scale[i, 0]) for i in range(self.batch_size)]
-                    tau = tf.stack(tau, axis=0)
+                    if not self.params['use_beta']:
+                        loc = inputs
+                        scale = inputs
+                        for ix, size in enumerate(self.G_t_layers):
+                            loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
+                                                  reuse=reuse, activation=tf.nn.tanh,
+                                                  kernel_initializer=tf.contrib.layers.xavier_initializer())
+                            scale = tf.layers.dense(scale, size, name="Generator.scale_tau_{}".format(ix),
+                                                    reuse=reuse, activation=tf.nn.tanh,
+                                                    kernel_initializer=tf.contrib.layers.xavier_initializer())
+                        loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", reuse=reuse, activation=None)
+                        scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", reuse=reuse, activation=None)
+                        tau = [tf.truncated_normal([1], mean=loc[i, 0], stddev=scale[i, 0]) for i in range(self.batch_size)]
+                        tau = tf.stack(tau, axis=0)
+                    else:
+                        loc = inputs
+                        scale = inputs
+                        for ix, size in enumerate(self.G_t_layers):
+                            loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
+                                                  reuse=reuse, activation=tf.nn.tanh,
+                                                  kernel_initializer=tf.contrib.layers.xavier_initializer())
+                            scale = tf.layers.dense(scale, size, name="Generator.scale_tau_{}".format(ix),
+                                                    reuse=reuse, activation=tf.nn.tanh,
+                                                    kernel_initializer=tf.contrib.layers.xavier_initializer())
+                        loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", reuse=reuse, activation=None)
+                        scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", reuse=reuse, activation=None)
+                        tau = self.beta_decoder(_alpha_param=loc, _beta_param=scale)
                 else:
                     tau = tf.layers.dense(initial_states_noise, 1, name="Generator.tau_decoder", reuse=reuse, activation=None)
 
@@ -577,22 +592,6 @@ class TGGAN:
                 #     tau = tf.layers.dense(initial_states_noise, 1, name="Generator.tau_decoder", reuse=reuse, activation=None)
                 #
                 # tau_outputs.append(tau)
-
-                # if decoder:
-                #     loc = inputs
-                #     scale = inputs
-                #     for ix, size in enumerate(self.G_t_layers):
-                #         loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
-                #                               reuse=reuse, activation=tf.nn.tanh,
-                #                               kernel_initializer=tf.contrib.layers.xavier_initializer())
-                #         scale = tf.layers.dense(scale, size, name="Generator.scale_tau_{}".format(ix),
-                #                                 reuse=reuse, activation=tf.nn.tanh,
-                #                                 kernel_initializer=tf.contrib.layers.xavier_initializer())
-                #     loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", reuse=reuse, activation=None)
-                #     scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", reuse=reuse, activation=None)
-                #     tau = self.beta_decoder(_alpha_param=loc, _beta_param=scale)
-                # else:
-                #     tau = tf.layers.dense(initial_states_noise, 1, name="Generator.tau_decoder", reuse=reuse, activation=None)
 
                 # if i == 0: t_outputs.append(tau)
                 # else: t_outputs.append(tf.math.add(tau, t_outputs[-1]))
