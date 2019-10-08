@@ -199,7 +199,7 @@ class TGGAN:
         self.generator_function = self.generator_recurrent
         self.discriminator_function = self.discriminator_recurrent
 
-        self.fake_v_inputs, self.fake_t0_inputs, self.fake_t_inputs = self.generator_function(
+        self.fake_v_inputs, self.fake_t_inputs = self.generator_function(
             self.batch_size, reuse=False, gumbel=use_gumbel, legacy=legacy_generator)
 
         self.fake_lengths = tf.ones(name='Generator.fake_lengths', dtype=tf.int64, shape=[self.batch_size,])
@@ -260,24 +260,24 @@ class TGGAN:
         #     ]), reduction_indices=[1])
         # )
 
-        alpha_v = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
-        alpha_t = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
-        self.differences_v = self.fake_v_inputs - self.real_v_inputs
-        self.interpolates_v = self.real_v_inputs + (alpha_v * self.differences_v)
-        self.differences_t = self.fake_t_inputs - self.real_t_inputs
-        self.interpolates_t = self.real_t_inputs + (alpha_t * self.differences_t)
-        self.gradients_v, self.gradients_t = tf.gradients(
-            self.discriminator_function(self.interpolates_v, self.interpolates_t, self.fake_lengths, reuse=True),
-            [self.interpolates_v, self.interpolates_t])
-        self.slopes = tf.sqrt(
-            tf.reduce_sum(tf.stack([
-                tf.reduce_sum(tf.square(self.gradients_v), reduction_indices=[1, 2]),
-                tf.reduce_sum(tf.square(self.gradients_t), reduction_indices=[1, 2]),
-            ]), reduction_indices=[1])
-        )
-
-        self.gradient_penalty = tf.reduce_mean((self.slopes - 1.) ** 2)
-        self.disc_cost += self.params['Wasserstein_penalty'] * self.gradient_penalty
+        # alpha_v = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
+        # alpha_t = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
+        # self.differences_v = self.fake_v_inputs - self.real_v_inputs
+        # self.interpolates_v = self.real_v_inputs + (alpha_v * self.differences_v)
+        # self.differences_t = self.fake_t_inputs - self.real_t_inputs
+        # self.interpolates_t = self.real_t_inputs + (alpha_t * self.differences_t)
+        # self.gradients_v, self.gradients_t = tf.gradients(
+        #     self.discriminator_function(self.interpolates_v, self.interpolates_t, self.fake_lengths, reuse=True),
+        #     [self.interpolates_v, self.interpolates_t])
+        # self.slopes = tf.sqrt(
+        #     tf.reduce_sum(tf.stack([
+        #         tf.reduce_sum(tf.square(self.gradients_v), reduction_indices=[1, 2]),
+        #         tf.reduce_sum(tf.square(self.gradients_t), reduction_indices=[1, 2]),
+        #     ]), reduction_indices=[1])
+        # )
+        #
+        # self.gradient_penalty = tf.reduce_mean((self.slopes - 1.) ** 2)
+        # self.disc_cost += self.params['Wasserstein_penalty'] * self.gradient_penalty
 
         # weight regularization; we omit W_down from regularization
         self.disc_l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()
@@ -350,6 +350,7 @@ class TGGAN:
             t_inputs = ts[:, :, 0]
             for ix, size in enumerate(self.D_layers):
                 t_inputs = tf.layers.dense(t_inputs, size, reuse=reuse, name="Discriminator.t_{}".format(ix),
+                                           activation=tf.nn.tanh,
                                            kernel_initializer=tf.contrib.layers.xavier_initializer())
             t_inputs = tf.expand_dims(t_inputs, axis=1)
 
@@ -398,7 +399,7 @@ class TGGAN:
         lengths = tf.math.reduce_sum(tf.cast(tf.math.less(-1, tf.cast(inputs_discrete, dtype=tf.int32)), dtype=tf.int64), axis=1)
         return lengths
 
-    def generator_recurrent(self, n_samples, reuse=None, z=None, t0=None, t1=None, gumbel=True, decoder=True, legacy=False):
+    def generator_recurrent(self, n_samples, reuse=None, z=None, gumbel=True, decoder=True, legacy=False):
         """
         Generate random walks using LSTM.
         Parameters
@@ -431,7 +432,6 @@ class TGGAN:
                 initial_states_noise = z
 
             # # generate start node binary if not need
-            t0_res = t0
             # if t0: t0_res = t0
             # else:
             #     # t_start_wait = initial_states_noise
@@ -531,19 +531,19 @@ class TGGAN:
                 # tau = tf.nn.sigmoid(tf.matmul(inputs, self.W_tau) + self.b_W_tau)
                 # generate \tau with decoder sampling
                 if decoder:
-                    mu = inputs
-                    sigma = inputs
+                    loc = inputs
+                    scale = inputs
                     for ix, size in enumerate(self.G_t_layers):
-                        mu = tf.layers.dense(mu, size, name="Generator.mu_tau_{}".format(ix),
-                                                   reuse=reuse, activation=tf.nn.tanh,
-                                                   kernel_initializer=tf.contrib.layers.xavier_initializer())
-                        sigma = tf.layers.dense(sigma, size, name="Generator.sigma_tau_{}".format(ix),
-                                                      reuse=reuse, activation=tf.nn.tanh,
-                                                      kernel_initializer=tf.contrib.layers.xavier_initializer())
-                    mu = tf.layers.dense(mu, 1, name="Generator.mu_tau_last", reuse=reuse, activation=None)
-                    sigma = tf.layers.dense(sigma, 1, name="Generator.sigma_tau_last", reuse=reuse, activation=None)
+                        loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
+                                              reuse=reuse, activation=tf.nn.tanh,
+                                              kernel_initializer=tf.contrib.layers.xavier_initializer())
+                        scale = tf.layers.dense(scale, size, name="Generator.scale_tau_{}".format(ix),
+                                                reuse=reuse, activation=tf.nn.tanh,
+                                                kernel_initializer=tf.contrib.layers.xavier_initializer())
+                    loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", reuse=reuse, activation=None)
+                    scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", reuse=reuse, activation=None)
                     # tau = self.var_decoder(mu_start, sigma_start)
-                    tau = tf.random_normal([self.batch_size,], mean=mu, stddev=sigma)
+                    tau = tf.random_normal([self.batch_size,], mean=loc, stddev=scale)
                 else:
                     tau = tf.layers.dense(initial_states_noise, 1, name="Generator.tau_decoder", reuse=reuse, activation=None)
                 t_outputs.append(tau)
@@ -555,7 +555,7 @@ class TGGAN:
 
             v_outputs = tf.stack(v_outputs, axis=1)
             t_outputs = tf.stack(t_outputs, axis=1)
-        return v_outputs, t0_res, t_outputs
+        return v_outputs, t_outputs
 
     def var_decoder(self, mu, sigma):
         shape = tf.shape(mu)
@@ -589,12 +589,11 @@ class TGGAN:
 
 
         """
-        t0 = tf.ones(shape=[n_samples,1])
-        fake_v_outputs, fake_t0_outputs, fake_t_outputs = self.generator_function(n_samples, reuse, z,
-                                                                                  t0=t0, gumbel=gumbel, legacy=legacy)
+        fake_v_outputs, fake_t_outputs = self.generator_function(n_samples, reuse, z,
+                                                                 gumbel=gumbel, legacy=legacy)
         fake_v_outputs_discrete = tf.argmax(fake_v_outputs, axis=-1)
 
-        return fake_v_outputs_discrete, fake_t0_outputs, fake_t_outputs
+        return fake_v_outputs_discrete, fake_t_outputs
 
     def train(self, n_eval_loop, max_iters=50000, stopping=None, eval_transitions=15e6,
               transitions_per_iter=150000, max_patience=5, eval_every=500, plot_every=-1,
@@ -760,19 +759,17 @@ class TGGAN:
                 real_walks = []
                 for _ in range(n_eval_iters):
                     smpls = self.session.run([sample_many], {self.temp: 0.5})
-                    fake_v, fake_t0, fake_t = smpls[0]
+                    fake_v, fake_t = smpls[0]
                     # print('fake_t:\n {} \nfake_v: \n{}'.format(fake_t, fake_v))
 
-                    # smpls = np.stack([fake_t0[:, 0], fake_v[:, 0]], axis=1)
-                    smpls = np.stack([fake_t[:, 0, 0], fake_v[:, 0]], axis=1)
-
+                    smpls = np.stack([fake_v[:, 0], fake_t[:, 0, 0]], axis=1)
                     fake_walks.append(smpls)
 
                     real_v, real_t0, real_t = self.session.run([
                         self.real_v_inputs_discrete, self.real_t0_inputs, self.real_t_inputs
                     ],feed_dict={self.temp: 0.5})
                     # walk = np.stack([real_t0[:, 0], real_v[:, 0]], axis=1)
-                    walk = np.stack([real_t[:, 0, 0], real_v[:, 0]], axis=1)
+                    walk = np.stack([real_v[:, 0], real_t[:, 0, 0]], axis=1)
                     real_walks.append(walk)
                 fake_walks = np.array(fake_walks).reshape(-1, 2)
                 real_walks = np.array(real_walks).reshape(-1, 2)
@@ -786,23 +783,36 @@ class TGGAN:
                 log("**** Saving snapshots into {} ****".format(save_file))
 
                 # plot edges time series for qualitative evaluation
-                real_v_list = np.unique(real_walks[:, 1])
-                fake_v_list = np.unique(fake_walks[:, 1])
+                real_v_list, real_v_counts = np.unique(real_walks[:, 0], return_counts=True)
+                fake_v_list, fake_v_counts = np.unique(fake_walks[:, 0], return_counts=True)
                 n_v = len(real_v_list)
-                fig, ax = plt.subplots(n_v, 2, figsize=(9*2, n_v*3))
-                ax[0, 0].annotate('real nodes number: {} shape: {} \nfake nodes number: {} shape: {}'.format(
-                    n_v, real_walks.shape, len(fake_v_list), fake_walks.shape), (0.5, 0.02))
+
+                fig, ax = plt.subplots(n_v+1, 2, figsize=(2*9, (n_v+1)*4))
+
+                real_ax = ax[0, 0]
+                real_ax.bar(real_v_list, real_v_counts)
+                real_ax.set_xlim([-1, self.N+1])
+                real_ax.set_title('real nodes number: {}'.format(len(real_v_list)))
+                fake_ax = ax[0, 1]
+                fake_ax.bar(fake_v_list, fake_v_counts)
+                fake_ax.set_xlim([-1, self.N+1])
+                fake_ax.set_title('fake nodes number: {}'.format(len(fake_v_list)))
+
                 for i, e in enumerate(real_v_list):
-                    real_times = real_walks[real_walks[:, 1] == e][:, 0]
-                    fake_times = fake_walks[fake_walks[:, 1] == e][:, 0]
-                    ax_real = ax[i, 0]
-                    ax_real.hist(real_times, range=[-0.5, 1.5], bins=200)
-                    ax_real.set_title('start node: {}'.format(int(e)))
-                    # if i > 0: ax_real.set_xticklabels([])
-                    ax_fake = ax[i, 1]
-                    ax_fake.hist(fake_times, range=[-0.5, 1.5], bins=200)
-                    ax_fake.set_title('start node: {}'.format(int(e)))
-                    # if i > 0: ax_fake.set_xticklabels([])
+                    real_ax = ax[i+1, 0]
+                    real_mask = real_walks[:, 0] == e
+                    real_times = real_walks[real_mask][:, 1]
+                    real_ax.hist(real_times, range=[-0.5, 1.5], bins=200)
+                    real_ax.set_title('start node: {} loc: {:.4f} scale: {:.4f}'.format(
+                        int(e), real_times.mean(), real_times.std()))
+
+                    fake_ax = ax[i+1, 1]
+                    fake_mask = fake_walks[:, 0] == e
+                    fake_times = fake_walks[fake_mask][:, 1]
+                    fake_ax.hist(fake_times, range=[-0.5, 1.5], bins=200)
+                    fake_ax.set_title('start node: {} loc: {:.4f} scale: {:.4f}'.format(
+                        int(e), fake_times.mean(), fake_times.std()))
+
                 plt.tight_layout()
                 plt.savefig('{}/iter_{}_validation.png'.format(output_directory, _it+1))
                 plt.close()
