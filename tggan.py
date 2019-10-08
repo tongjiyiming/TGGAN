@@ -74,7 +74,8 @@ class TGGAN:
                  batch_size=128, noise_dim=16,
                  noise_type="Gaussian", learning_rate=0.0003, disc_iters=3, wasserstein_penalty=10,
                  l2_penalty_generator=1e-7, l2_penalty_discriminator=5e-5, temp_start=5.0, min_temperature=0.5,
-                 temperature_decay=1 - 5e-5, seed=15, gpu_id=0, use_gumbel=True, legacy_generator=False, wgan=False):
+                 temperature_decay=1 - 5e-5, seed=15, gpu_id=0, use_gumbel=True, use_wgan=False,
+                 legacy_generator=False, wgan=False):
         """
         Initialize NetGAN.
 
@@ -150,6 +151,7 @@ class TGGAN:
             'temperature_decay': temperature_decay,
             'disc_iters': disc_iters,
             'use_gumbel': use_gumbel,
+            'use_wgan': use_wgan,
             'legacy_generator': legacy_generator
         }
 
@@ -232,7 +234,7 @@ class TGGAN:
         self.disc_cost = tf.reduce_mean(self.disc_fake) - tf.reduce_mean(self.disc_real)
         self.gen_cost = -tf.reduce_mean(self.disc_fake)
 
-        if wgan:
+        if self.params['use_wgan']:
             # WGAN lipschitz-penalty
             # alpha_v = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
             #
@@ -529,6 +531,7 @@ class TGGAN:
                 inputs = tf.matmul(v_output, self.W_down_generator)
 
                 # generate \tau with decoder sampling
+
                 if decoder:
                     loc = inputs
                     scale = inputs
@@ -541,11 +544,10 @@ class TGGAN:
                                                 kernel_initializer=tf.contrib.layers.xavier_initializer())
                     loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", reuse=reuse, activation=None)
                     scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", reuse=reuse, activation=None)
-                    tau = tf.random_normal([self.batch_size,], mean=loc, stddev=scale)
+                    tau = [tf.random_normal([1], mean=loc[i, 0], stddev=scale[i, 0]) for i in range(self.batch_size)]
+                    tau = tf.stack(tau, axis=0)
                 else:
                     tau = tf.layers.dense(initial_states_noise, 1, name="Generator.tau_decoder", reuse=reuse, activation=None)
-
-                tau_outputs.append(tau)
 
                 # # generate \tau with decoder sampling
                 # if decoder:
@@ -569,7 +571,8 @@ class TGGAN:
                 #                                 kernel_initializer=tf.contrib.layers.xavier_initializer())
                 #     posterior_scale = tf.layers.dense(posterior_scale, 1, name="Generator.posterior_scale_tau_last",
                 #                                   reuse=reuse, activation=None)
-                #     tau = tf.random_normal([self.batch_size,], mean=posterior_mean, stddev=posterior_scale)
+                # tau = [tf.random_normal([1], mean=posterior_mean[i, 0], stddev=posterior_scale[i, 0]) for i in range(self.batch_size)]
+                # tau = tf.stack(tau, axis=0)
                 # else:
                 #     tau = tf.layers.dense(initial_states_noise, 1, name="Generator.tau_decoder", reuse=reuse, activation=None)
                 #
@@ -588,29 +591,27 @@ class TGGAN:
                 #     loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", reuse=reuse, activation=None)
                 #     scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", reuse=reuse, activation=None)
                 #     tau = self.beta_decoder(_alpha_param=loc, _beta_param=scale)
-                #     print('tau', tau.get_shape())
                 # else:
                 #     tau = tf.layers.dense(initial_states_noise, 1, name="Generator.tau_decoder", reuse=reuse, activation=None)
-                #
-                # tau_outputs.append(tau)
 
                 # if i == 0: t_outputs.append(tau)
                 # else: t_outputs.append(tf.math.add(tau, t_outputs[-1]))
 
                 v_outputs.append(v_output)
+                tau_outputs.append(tau)
 
             v_outputs = tf.stack(v_outputs, axis=1)
             tau_outputs = tf.stack(tau_outputs, axis=1)
         return v_outputs, tau_outputs
 
     def beta_decoder(self, _alpha_param, _beta_param, B = 5):
-          # B is for shape augmentation
+        # B is for shape augmentation
         alpha = tf.exp(_alpha_param)
         beta = tf.exp(_beta_param)
-
+        size = _alpha_param.get_shape()[0]
         # sample epsilon for each gamma
-        epsilon_a = self.sample_pi(alpha + B, 1., (1,))[0]
-        epsilon_b = self.sample_pi(beta + B, 1., (1,))[0]
+        epsilon_a = self.sample_pi(alpha + B, 1., size)[0]
+        epsilon_b = self.sample_pi(beta + B, 1., size)[0]
         z_tilde_a = self.h(epsilon_a, alpha + B, 1.)
         z_tilde_b = self.h(epsilon_b, beta + B, 1.)
         z_a = self.shape_augmentation(z_tilde_a, B, alpha)
@@ -619,8 +620,9 @@ class TGGAN:
         z = z_a / (z_a + z_b)
         return z
 
-    def sample_pi(self, alpha, beta, size=(1,)):
-        gamma_samples = tf.random_gamma(size, alpha, beta)
+    def sample_pi(self, alpha, beta, size):
+        gamma_samples = [tf.random_gamma([1], alpha[i, 0], beta) for i in range(size)]
+        gamma_samples = tf.stack(gamma_samples, axis=0)
         return tf.stop_gradient(self.h_inverse(gamma_samples, alpha, beta))
 
     def h_inverse(self, z, alpha, beta):

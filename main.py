@@ -117,6 +117,7 @@ def main(args):
         gpu_id = 0
 
         lr = args.learningrate
+        use_wgan = args.wgan
 
         # random data from metro
         userid = args.userid
@@ -144,6 +145,7 @@ def main(args):
                       discriminator_layers=[40, 10],
                       temp_start=5,
                       learning_rate=lr,
+                      use_wgan=use_wgan,
                       )
 
         max_iters = 100000
@@ -206,6 +208,8 @@ if __name__ == '__main__':
     # hyperparameter for GAN
     parser.add_argument("-lr", "--learningrate", default=0.00003, type=float,
                         help="if this run should run all evaluations")
+    parser.add_argument("-uw", "--use_wgan", default=False, type=bool,
+                        help="if use WGAN loss function")
     parser.add_argument("-ct", "--continueTraining", default=False, type=bool,
                         help="if this run is restored from a corrupted run")
 
