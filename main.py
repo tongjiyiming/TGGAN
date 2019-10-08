@@ -44,7 +44,7 @@ def main(args):
         n_nodes = 91
         scale = 0.1
         rw_len = args.rw_len
-        batch_size = 16
+        batch_size = 32
         train_ratio = 0.9
         t_end = 1.
         embedding_size = 64
@@ -85,7 +85,7 @@ def main(args):
         plot_every = 5000
         n_eval_loop = 1
         transitions_per_iter = batch_size * n_eval_loop
-        eval_transitions = transitions_per_iter * 100
+        eval_transitions = transitions_per_iter * 1000
         model_name = 'metro-user-{}'.format(userid)
         save_directory = "snapshots-user-{}".format(userid)
         output_directory='outputs-user-{}'.format(userid)
@@ -139,7 +139,7 @@ def main(args):
                       W_down_generator_size=embedding_size,
                       l2_penalty_generator=1e-7,
                       l2_penalty_discriminator=5e-5,
-                      generator_start_layers=[20, 10],
+                      generator_start_layers=[40, 10],
                       generator_layers=[50, 10],
                       discriminator_layers=[40, 10],
                       temp_start=5,
