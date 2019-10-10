@@ -52,6 +52,7 @@ tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 # import tensorflow_probability as tfp
 
 from matplotlib import pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 from sklearn.metrics import roc_auc_score, average_precision_score
 import itertools
 
@@ -66,8 +67,8 @@ class TGGAN:
 
     def __init__(self, N, rw_len, walk_generator,
                  t_end,
-                 generator_start_up_layers=[32],
-                 generator_deconv_output_depth=40,
+                 generator_start_up_layers=[128],
+                 generator_deconv_output_depth=8,
                  generator_start_layers=[30],
                  discriminator_start_layers=[30],
                  generator_layers=[40],
@@ -78,7 +79,7 @@ class TGGAN:
                  noise_type="Gaussian", learning_rate=0.0003, disc_iters=3, wasserstein_penalty=10,
                  l2_penalty_generator=1e-7, l2_penalty_discriminator=5e-5, temp_start=5.0, min_temperature=0.5,
                  temperature_decay=1 - 5e-5, seed=15, gpu_id=0, use_gumbel=True, legacy_generator=False,
-                 use_wgan=True, use_beta=False, use_decoder=False,
+                 use_wgan=False, use_beta=False, use_decoder=False,
                  ):
         """
         Initialize NetGAN.
@@ -178,9 +179,11 @@ class TGGAN:
         self.D_t_layers = self.params['discriminator_start_layers']
         self.G_layers = self.params['Generator_Layers']
         self.D_layers = self.params['Discriminator_Layers']
-        self.temp = tf.placeholder(1.0, shape=(), name="temperature")
 
         # matrix would be reused
+        self.temp = tf.placeholder(1.0, shape=(), name="temperature")
+        self.mode = tf.placeholder(tf.bool, name='mode')
+
         self.t_end = tf.constant(value=self.params['t_end'], name='t_end',
                                  dtype=tf.float32, shape=[1])
 
@@ -212,12 +215,13 @@ class TGGAN:
         self.generator_function = self.generator_recurrent
         self.discriminator_function = self.discriminator_recurrent
 
-        self.fake_x_inputs, self.fake_t0_res_inputs, self.fake_v_inputs, self.fake_tau_inputs = self.generator_function(
+        self.fake_x_inputs, self.fake_t0_res_inputs, \
+        self.fake_v_inputs, self.fake_u_inputs, self.fake_tau_inputs = self.generator_function(
             self.batch_size, reuse=False, decoder=use_decoder, gumbel=use_gumbel, legacy=legacy_generator)
 
         self.fake_lengths = tf.ones(name='Generator.fake_lengths', dtype=tf.int64, shape=[self.batch_size,])
 
-        self.fake_inputs_discrete = self.generate_discrete(self.batch_size, reuse=True, decoder=self.params['use_decoder'],
+        self.fake_inputs_discrete = self.generate_discrete(self.batch_size, reuse=True, decoder=use_decoder,
                                                            gumbel=use_gumbel, legacy=legacy_generator)
 
         # Pre-fetch real random walks
@@ -231,6 +235,8 @@ class TGGAN:
         self.real_data = batch_iterator.get_next()
         self.real_v_inputs_discrete = tf.cast(self.real_data[:, 1:, 0], dtype=tf.int64)
         self.real_v_inputs = tf.one_hot(self.real_v_inputs_discrete, self.N)
+        self.real_u_inputs_discrete = tf.cast(self.real_data[:, 1:, 1], dtype=tf.int64)
+        self.real_u_inputs = tf.one_hot(self.real_u_inputs_discrete, self.N)
         self.real_x_input_discretes = tf.cast(self.real_data[:, 0, 0], dtype=tf.int64)
         self.real_x_inputs = tf.one_hot(self.real_x_input_discretes, 2)
         self.real_t0_res_inputs = self.real_data[:, 0:1, 2]
@@ -238,9 +244,11 @@ class TGGAN:
         self.real_lengths = self.get_real_input_lengths(self.real_v_inputs_discrete)
 
         self.disc_real = self.discriminator_function(self.real_x_inputs, self.real_t0_res_inputs,
-                                                     self.real_v_inputs, self.real_tau_inputs, self.real_lengths)
+                                                     self.real_v_inputs, self.real_u_inputs, self.real_tau_inputs,
+                                                     self.real_lengths)
         self.disc_fake = self.discriminator_function(self.fake_x_inputs, self.fake_t0_res_inputs,
-                                                     self.fake_v_inputs, self.fake_tau_inputs, self.fake_lengths, reuse=True)
+                                                     self.fake_v_inputs, self.fake_u_inputs, self.fake_tau_inputs,
+                                                     self.fake_lengths, reuse=True)
 
         self.disc_cost = tf.reduce_mean(self.disc_fake) - tf.reduce_mean(self.disc_real)
         self.gen_cost = -tf.reduce_mean(self.disc_fake)
@@ -284,14 +292,16 @@ class TGGAN:
         with tf.name_scope('disc_l2_loss'):
             self.disc_l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()
                                           if 'Disc' in v.name
-                                          and not 'W_down' in v.name]) * self.params['l2_penalty_discriminator']
+                                          and not 'W_down' in v.name
+                                          and not 'deconv' in v.name]) * self.params['l2_penalty_discriminator']
         self.disc_cost += self.disc_l2_loss
 
         # weight regularization; we omit  W_down from regularization
         with tf.name_scope('gen_l2_loss'):
             self.gen_l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()
                                          if 'Gen' in v.name
-                                         and not 'W_down' in v.name]) * self.params['l2_penalty_generator']
+                                         and not 'W_down' in v.name
+                                         and not 'deconv' in v.name]) * self.params['l2_penalty_generator']
         self.gen_cost += self.gen_l2_loss
 
         self.gen_params = [v for v in tf.trainable_variables() if 'Generator' in v.name]
@@ -320,7 +330,7 @@ class TGGAN:
         self.session = tf.InteractiveSession(config=config)
         self.init_op = tf.global_variables_initializer()
 
-    def discriminator_recurrent(self, x, t0_res, edges, taus, lengths, reuse=None):
+    def discriminator_recurrent(self, x, t0_res, vs, us, taus, lengths, reuse=None):
         """
         Discriminate real from fake random walks using LSTM.
         Parameters
@@ -343,9 +353,10 @@ class TGGAN:
 
             x_input_reshape = tf.reshape(x, [-1, 2])
             x_input_reshape = tf.matmul(x_input_reshape, self.W_down_x_discriminator)
-            x_input_reshape = tf.layers.dense(x_input_reshape, int(self.W_down_discriminator.get_shape()[-1]),
-                                              reuse=reuse, name="Discriminator.x_up_scale",
+            x_input_reshape = tf.layers.dense(x_input_reshape, int(self.W_down_discriminator.get_shape()[-1]*2),
+                                              reuse=reuse, name="Discriminator.x_up_scale", activation=tf.nn.tanh,
                                               kernel_initializer=tf.contrib.layers.xavier_initializer())
+            # x_input_reshape = tf.layers.batch_normalization(x_input_reshape, training= self.mode)
 
             t0_inputs = tf.reshape(t0_res, [-1, 1])
             for ix, size in enumerate(self.D_layers):
@@ -355,13 +366,19 @@ class TGGAN:
 
             x_t0_inputs = tf.concat([x_input_reshape, t0_inputs], axis=1)
 
-            def lstm_cell(lstm_size):
-                return tf.contrib.rnn.BasicLSTMCell(lstm_size, reuse=tf.get_variable_scope().reuse)
-            disc_lstm_cell = tf.contrib.rnn.MultiRNNCell([lstm_cell(size) for size in self.D_layers])
+            def lstm_cell(lstm_size, name):
+                return tf.contrib.rnn.BasicLSTMCell(lstm_size, reuse=tf.get_variable_scope().reuse,
+                                                    name="Discriminator.lstm_cell_{}".format(name))
+            disc_lstm_cell = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, str(size)) for size in self.D_layers])
 
-            v_input_reshape = tf.reshape(edges, [-1, self.N])
+            v_input_reshape = tf.reshape(vs, [-1, self.N])
             v_input_reshape = tf.matmul(v_input_reshape, self.W_down_discriminator)
             v_input_reshape = tf.reshape(v_input_reshape, [-1, self.rw_len, int(self.W_down_discriminator.get_shape()[-1])])
+
+            u_input_reshape = tf.reshape(us, [-1, self.N])
+            u_input_reshape = tf.matmul(u_input_reshape, self.W_down_discriminator)
+            u_input_reshape = tf.reshape(u_input_reshape,
+                                         [-1, self.rw_len, int(self.W_down_discriminator.get_shape()[-1])])
 
             t_inputs = tf.reshape(taus, [-1, 1])
             for ix, size in enumerate(self.D_layers):
@@ -370,9 +387,8 @@ class TGGAN:
                                            kernel_initializer=tf.contrib.layers.xavier_initializer())
             t_inputs = tf.reshape(t_inputs, [-1, self.rw_len, self.D_layers[-1]])
 
-            input_reshape = tf.concat([v_input_reshape, t_inputs], axis=2)
-
-            inputs = [x_t0_inputs] + tf.unstack(input_reshape, axis=1)
+            inputs = tf.concat([v_input_reshape, u_input_reshape, t_inputs], axis=2)
+            inputs = [x_t0_inputs] + tf.unstack(inputs, axis=1)
 
             output_disc, state_disc = tf.contrib.rnn.static_rnn(cell=disc_lstm_cell,
                                                                 inputs=inputs,
@@ -444,7 +460,7 @@ class TGGAN:
                     x_output = tf.nn.softmax(x_logit)
 
                 # Back to dimension 2 of x
-                x_input = tf.matmul(x_output, self.W_down_x_generator)
+                x_down = tf.matmul(x_output, self.W_down_x_generator)
 
             t0_res_output = None
             if t0:
@@ -453,10 +469,10 @@ class TGGAN:
                 with tf.name_scope('t0_decoder'):
                     if decoder:
                         with tf.name_scope('t0_decoder'):
-                            # loc_t0 = tf.concat([x_input, initial_states_noise], axis=1)
-                            # scale_t0 = tf.concat([x_input, initial_states_noise], axis=1)
-                            loc_t0 = x_input
-                            scale_t0 = x_input
+                            loc_t0 = tf.concat([x_down, initial_states_noise], axis=1)
+                            scale_t0 = tf.concat([x_down, initial_states_noise], axis=1)
+                            # loc_t0 = x_down
+                            # scale_t0 = x_down
                             for ix, size in enumerate(self.G_t_layers):
                                 loc_t0 = tf.layers.dense(loc_t0, size, name="Generator.loc_t0_{}".format(ix),
                                                          reuse=reuse, activation=tf.nn.tanh)
@@ -468,12 +484,12 @@ class TGGAN:
                             scale_t0 = tf.layers.dense(scale_t0, 1, name="Generator.scale_t0_last", reuse=reuse,
                                                        activation=None)
 
-                            t0_wait = [tf.truncated_normal(
-                                [1], mean=loc_t0[i, 0], stddev=scale_t0[i, 0]) for i in range(self.batch_size)]
+                            t0_wait = [tf.truncated_normal([1], mean=loc_t0[i, 0], stddev=scale_t0[i, 0])
+                                       for i in range(self.batch_size)]
                             t0_wait = tf.stack(t0_wait, axis=0)
                     else:
                         with tf.name_scope('t0_deep_decoder'):
-                            t0_wait = x_input
+                            t0_wait = tf.concat([x_down, initial_states_noise], axis=1)
                             for ix, size in enumerate(self.G_t_up_layers):
                                 t0_wait = tf.layers.dense(t0_wait, size, name="Generator.t0_up_{}".format(ix),
                                                          reuse=reuse, activation=tf.nn.tanh)
@@ -481,13 +497,16 @@ class TGGAN:
 
                             # deconvolutional
                             n_strides = 2
-                            t0_wait = tf.nn.conv1d_transpose(t0_wait, filters=self.t0_deconv_filter,
-                                                             output_shape=[self.batch_size, self.G_t_up_layers[-1]*n_strides, self.G_t_deconv_output_depth],
-                                                             strides=n_strides, padding='SAME',
-                                                             name='Generator.t0_deconv')
+                            t0_wait = tf.nn.conv1d_transpose(
+                                t0_wait, filters=self.t0_deconv_filter,
+                                output_shape=[self.batch_size, int(t0_wait.get_shape()[1])*n_strides,
+                                              self.G_t_deconv_output_depth],
+                                strides=n_strides, padding='SAME',
+                                name='Generator.t0_deconv')
+
                             choice = tf.random_uniform([1], maxval=t0_wait.get_shape()[1], dtype=tf.int64)[0]
                             t0_wait = t0_wait[:, choice, :]
-                            t0_wait = tf.layers.dense(t0_wait, 1, name="Generator.t0_last", reuse=reuse, activation=None)
+                            t0_wait = tf.layers.dense(t0_wait, 1, name="Generator.t0_deconv_last", reuse=reuse, activation=None)
 
                 # t0_output = tf.nn.relu(self.t_end - t0_wait, name='Generator.t0_res')
                 condition = tf.math.equal(tf.argmax(x_output, axis=-1), 1)
@@ -495,11 +514,11 @@ class TGGAN:
                 t0_input = t0_res_output
 
             # generate input vector for lstm from x
+            x_input = tf.layers.dense(x_down, self.params['W_Down_Generator_size']*2,
+                                      name="Generator.x_inputs", reuse=reuse)
             # inputs = tf.zeros([n_samples, self.params['W_Down_Generator_size']])
-            inputs = tf.concat([x_input, t0_input], axis=1)
-            # inputs = tf.concat([x_input, t0_input, initial_states_noise], axis=1)
-            inputs = tf.layers.dense(inputs, self.params['W_Down_Generator_size'],
-                                     name="Generator.x_t0_inputs", reuse=reuse)
+            inputs = tf.concat([x_input, t0_input], axis=1, name='lstm_initial_inputs')
+            # inputs = tf.concat([x_input, t0_input, initial_states_noise], axis=1, name='lstm_initial_inputs')
 
             # initial lstm states from noise
             initial_states = []
@@ -529,6 +548,7 @@ class TGGAN:
 
             # start to generate edge and end node y
             v_outputs = []
+            u_outputs = []
             tau_outputs = []
 
             def lstm_cell(lstm_size, name):
@@ -547,21 +567,25 @@ class TGGAN:
                 output, state = self.stacked_lstm.call(inputs, state)
 
                 # Blow up to dimension N x N using W_up
-                v_logit = tf.layers.dense(output, self.N, name="Generator.W_up_v", activation=None)
-
-                # Perform Gumbel softmax to ensure gradients flow for e, and end node y
-                if gumbel:
-                    v_output = self.gumbel_softmax(v_logit, temperature=self.temp, hard=True)
-                else:
-                    v_output = tf.nn.softmax(v_logit)
+                v_logit = tf.layers.dense(output, self.N, name="Generator.W_up_v_node", activation=None)
+                if gumbel: v_output = self.gumbel_softmax(v_logit, temperature=self.temp, hard=True)
+                else:      v_output = tf.nn.softmax(v_logit)
 
                 # Back to dimension d
                 v_inputs = tf.matmul(v_output, self.W_down_generator)
 
+                u_logit = tf.layers.dense(tf.concat([output, v_inputs], axis=1), self.N,
+                                          name="Generator.W_up_u_node", activation=None)
+                if gumbel: u_output = self.gumbel_softmax(u_logit, temperature=self.temp, hard=True)
+                else:      u_output = tf.nn.softmax(u_logit)
+
+                # Back to dimension d
+                u_inputs = tf.matmul(u_output, self.W_down_generator)
+
                 if decoder:
                     with tf.name_scope('tau_decoder'):
-                        loc = output
-                        scale = output
+                        loc = tf.concat([v_inputs, u_inputs], axis=1)
+                        scale = tf.concat([v_inputs, u_inputs], axis=1)
                         for ix, size in enumerate(self.G_t_layers):
                             loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
                                                   activation=tf.nn.tanh,
@@ -580,7 +604,7 @@ class TGGAN:
                             tau = self.beta_decoder(_alpha_param=loc, _beta_param=scale)
                 else:
                     with tf.name_scope('tau_deep_decoder'):
-                        tau = output
+                        tau = tf.concat([v_inputs, u_inputs], axis=1)
                         for ix, size in enumerate(self.G_t_up_layers):
                             tau = tf.layers.dense(tau, size, name="Generator.tau_{}".format(ix),
                                                   activation=tf.nn.tanh,
@@ -597,17 +621,21 @@ class TGGAN:
                                                          name='Generator.tau_deconv')
                         choice = tf.random_uniform([1], maxval=tau.get_shape()[1], dtype=tf.int64)[0]
                         tau = tau[:, choice, :]
-                        tau = tf.layers.dense(tau, 1, name="Generator.tau_last",
+                        tau = tf.layers.dense(tau, 1, name="Generator.tau_deconv_last",
                                               activation=None)
 
-                inputs = tf.concat([v_inputs, tau], axis=1)
-                inputs = tf.layers.dense(inputs, self.params['W_Down_Generator_size'], name="Generator.e_tau_inputs")
+                inputs = tf.concat([v_inputs, u_inputs, tau], axis=1)
+                # inputs = tf.layers.dense(inputs, self.params['W_Down_Generator_size'], name="Generator.e_tau_inputs")
+
+                # save outputs
                 v_outputs.append(v_output)
+                u_outputs.append(u_output)
                 tau_outputs.append(tau)
 
             v_outputs = tf.stack(v_outputs, axis=1)
+            u_outputs = tf.stack(u_outputs, axis=1)
             tau_outputs = tf.stack(tau_outputs, axis=1)
-        return x_output, t0_res_output, v_outputs, tau_outputs
+        return x_output, t0_res_output, v_outputs, u_outputs, tau_outputs
 
     def beta_decoder(self, _alpha_param, _beta_param, B = 5):
         # B is for shape augmentation
@@ -681,12 +709,15 @@ class TGGAN:
 
 
         """
-        fake_x_output, fake_t0_res_output, fake_v_outputs, fake_tau_outputs = self.generator_function(n_samples, reuse, z,
-                                                                 decoder=self.params['use_decoder'], gumbel=gumbel, legacy=legacy)
+        fake_x_output, fake_t0_res_output, \
+        fake_v_outputs, fake_u_outputs, fake_tau_outputs = self.generator_function(
+            n_samples, reuse, z, decoder=self.params['use_decoder'], gumbel=gumbel, legacy=legacy)
         fake_v_outputs_discrete = tf.argmax(fake_v_outputs, axis=-1)
+        fake_u_outputs_discrete = tf.argmax(fake_u_outputs, axis=-1)
         fake_x_outputs_discrete = tf.argmax(fake_x_output, axis=-1)
 
-        return fake_x_outputs_discrete, fake_t0_res_output, fake_v_outputs_discrete, fake_tau_outputs
+        return fake_x_outputs_discrete, fake_t0_res_output, \
+               fake_v_outputs_discrete, fake_u_outputs_discrete, fake_tau_outputs
 
     def train(self, n_eval_loop, max_iters=50000, stopping=None, eval_transitions=15e6,
               transitions_per_iter=150000, max_patience=5, eval_every=500, plot_every=-1,
@@ -852,93 +883,112 @@ class TGGAN:
                 real_x_t0 = []
                 for _ in range(n_eval_iters):
                     smpls = self.session.run([sample_many], {self.temp: 0.5})
-                    fake_x, fake_t0, fake_v, fake_t = smpls[0]
-                    # print('fake_t:\n {} \nfake_v: \n{}'.format(fake_t, fake_v))
+                    fake_x, fake_t0, fake_v, fake_u, fake_t = smpls[0]
+                    # print('fake_t:\n {} \nfake_v: \n{} \nfake_u: \n{}'.format(fake_t, fake_v, fake_u))
 
-                    smpls = np.stack([fake_v[:, 0], fake_t[:, 0, 0]], axis=1)
+                    smpls = np.stack([fake_v[:, 0], fake_u[:, 0], fake_t[:, 0, 0]], axis=1)
                     fake_walks.append(smpls)
                     fake_start = np.stack([fake_x, fake_t0[:, 0]], axis=1)
                     fake_x_t0.append(fake_start)
 
-                    real_x, real_t0, real_v, real_tau = self.session.run([
-                        self.real_x_input_discretes, self.real_t0_res_inputs, self.real_v_inputs_discrete, self.real_tau_inputs
+                    real_x, real_t0, real_v, real_u, real_tau = self.session.run([
+                        self.real_x_input_discretes, self.real_t0_res_inputs,
+                        self.real_v_inputs_discrete, self.real_u_inputs_discrete, self.real_tau_inputs
                     ],feed_dict={self.temp: 0.5})
 
-                    walk = np.stack([real_v[:, 0], real_tau[:, 0, 0]], axis=1)
+                    walk = np.stack([real_v[:, 0], real_u[:, 0], real_tau[:, 0, 0]], axis=1)
                     real_walks.append(walk)
                     real_start = np.stack([real_x, real_t0[:, 0]], axis=1)
                     real_x_t0.append(real_start)
 
-                fake_walks = np.array(fake_walks).reshape(-1, 2)
+                fake_walks = np.array(fake_walks).reshape(-1, 3)
                 fake_x_t0 = np.array(fake_x_t0).reshape(-1, 2)
-                real_walks = np.array(real_walks).reshape(-1, 2)
+                real_walks = np.array(real_walks).reshape(-1, 3)
                 real_x_t0 = np.array(real_x_t0).reshape(-1, 2)
+                # print('fake_walks: \n{} \nreal_walks: \n{}'.format(fake_walks, real_walks))
 
                 # plot edges time series for qualitative evaluation
-                real_v_list, real_v_counts = np.unique(real_walks[:, 0], return_counts=True)
-                fake_v_list, fake_v_counts = np.unique(fake_walks[:, 0], return_counts=True)
+                fake_e_list, fake_e_counts = np.unique(fake_walks[:, 0:2], return_counts=True, axis=0)
+                real_e_list, real_e_counts = np.unique(real_walks[:, 0:2], return_counts=True, axis=0)
+
                 real_x_list, real_x_counts = np.unique(real_x_t0[:, 0], return_counts=True)
                 fake_x_list, fake_x_counts = np.unique(fake_x_t0[:, 0], return_counts=True)
-                n_v = len(real_v_list)
-                try:
-                    fig, ax = plt.subplots(n_v+4, 2, figsize=(2*9, (n_v+4)*4))
+                n_e = len(real_e_list)
+                # try:
+                fig = plt.figure(figsize=(18, 2*18))
+                fig.suptitle('Real and Fake edges comparisons')
+                dx = 0.3
+                dy = dx
+                zpos = 0
+                real_ax = fig.add_subplot(211, projection='3d')
+                real_ax.bar3d(real_e_list[:, 0], real_e_list[:, 1], zpos, dx, dy, real_e_counts)
+                real_ax.set_xlim([0, self.N])
+                real_ax.set_ylim([0, self.N])
+                real_ax.set_xticks(range(self.N))
+                real_ax.set_yticks(range(self.N))
+                real_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
+                real_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
+                real_ax.set_title('real edges number: {}'.format(len(real_e_list)))
 
-                    i = 0
-                    real_ax = ax[i, 0]
-                    real_ax.bar(real_x_list, real_x_counts)
-                    real_ax.set_xlim([-1, 2])
-                    real_ax.set_title('real start x number: {}'.format(len(real_x_list)))
-                    fake_ax = ax[i, 1]
-                    fake_ax.bar(fake_x_list, fake_x_counts)
-                    fake_ax.set_xlim([-1, 2])
-                    fake_ax.set_title('fake start x number: {}'.format(len(fake_x_list)))
+                fake_ax = fig.add_subplot(212, projection='3d')
+                fake_ax.bar3d(fake_e_list[:, 0], fake_e_list[:, 1], zpos, dx, dy, fake_e_counts)
+                fake_ax.set_xlim([0, self.N])
+                fake_ax.set_ylim([0, self.N])
+                fake_ax.set_xticks(range(self.N))
+                fake_ax.set_yticks(range(self.N))
+                fake_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
+                fake_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
+                fake_ax.set_title('fake edges number: {}'.format(len(fake_e_list)))
 
-                    for i, e in enumerate([0, 1]):
-                        j = 1
-                        real_ax = ax[i+j, 0]
-                        real_mask = real_x_t0[:, 0] == e
-                        real_times = real_x_t0[real_mask][:, 1]
-                        real_ax.hist(real_times, range=[-0.5, 1.5], bins=200)
-                        real_ax.set_title('real x node: {} loc: {:.4f} scale: {:.4f}'.format(
-                            int(e), real_times.mean(), real_times.std()))
+                plt.tight_layout()
+                plt.savefig('{}/iter_{}_edges_counts_validation.png'.format(output_directory, _it+1))
+                plt.close()
 
-                        fake_ax = ax[i+j, 1]
-                        fake_mask = fake_x_t0[:, 0] == e
-                        fake_times = fake_x_t0[fake_mask][:, 1]
-                        fake_ax.hist(fake_times, range=[-0.5, 1.5], bins=200)
-                        fake_ax.set_title('fake x node: {} loc: {:.4f} scale: {:.4f}'.format(
-                            int(e), fake_times.mean(), fake_times.std()))
+                fig, ax = plt.subplots(n_e+3, 2, figsize=(2*9, (n_e+3)*4))
+                i = 0
+                real_ax = ax[i, 0]
+                real_ax.bar(real_x_list, real_x_counts)
+                real_ax.set_xlim([-1, 2])
+                real_ax.set_title('real start x number: {}'.format(len(real_x_list)))
+                fake_ax = ax[i, 1]
+                fake_ax.bar(fake_x_list, fake_x_counts)
+                fake_ax.set_xlim([-1, 2])
+                fake_ax.set_title('fake start x number: {}'.format(len(fake_x_list)))
+                i = 1
+                for j, e in enumerate([0, 1]):
+                    real_ax = ax[i+j, 0]
+                    real_mask = real_x_t0[:, 0] == e
+                    real_times = real_x_t0[real_mask][:, 1]
+                    real_ax.hist(real_times, range=[-0.5, 1.5], bins=200)
+                    real_ax.set_title('real x node: {} loc: {:.4f} scale: {:.4f}'.format(
+                        int(e), real_times.mean(), real_times.std()))
 
-                    i = 3
-                    real_ax = ax[i, 0]
-                    real_ax.bar(real_v_list, real_v_counts)
-                    real_ax.set_xlim([-1, self.N+1])
-                    real_ax.set_title('real nodes number: {}'.format(len(real_v_list)))
-                    fake_ax = ax[i, 1]
-                    fake_ax.bar(fake_v_list, fake_v_counts)
-                    fake_ax.set_xlim([-1, self.N+1])
-                    fake_ax.set_title('fake nodes number: {}'.format(len(fake_v_list)))
+                    fake_ax = ax[i+j, 1]
+                    fake_mask = fake_x_t0[:, 0] == e
+                    fake_times = fake_x_t0[fake_mask][:, 1]
+                    fake_ax.hist(fake_times, range=[-0.5, 1.5], bins=200)
+                    fake_ax.set_title('fake x node: {} loc: {:.4f} scale: {:.4f}'.format(
+                        int(e), fake_times.mean(), fake_times.std()))
+                i = 3
+                for j, e in enumerate(real_e_list):
+                    real_ax = ax[i+j, 0]
+                    real_mask = np.logical_and(real_walks[:, 0] == e[0], real_walks[:, 1] == e[1])
+                    real_times = real_walks[real_mask][:, 2]
+                    real_ax.hist(real_times, range=[-0.5, 1.5], bins=200)
+                    real_ax.set_title('real start edge: {} loc: {:.4f} scale: {:.4f}'.format(
+                        [int(v) for v in e], real_times.mean(), real_times.std()))
 
-                    for i, e in enumerate(real_v_list):
-                        j = 4
-                        real_ax = ax[i+j, 0]
-                        real_mask = real_walks[:, 0] == e
-                        real_times = real_walks[real_mask][:, 1]
-                        real_ax.hist(real_times, range=[-0.5, 1.5], bins=200)
-                        real_ax.set_title('real start node: {} loc: {:.4f} scale: {:.4f}'.format(
-                            int(e), real_times.mean(), real_times.std()))
+                    fake_ax = ax[i+j, 1]
+                    fake_mask = np.logical_and(fake_walks[:, 0] == e[0], fake_walks[:, 1] == e[1])
+                    fake_times = fake_walks[fake_mask][:, 2]
+                    fake_ax.hist(fake_times, range=[-0.5, 1.5], bins=200)
+                    fake_ax.set_title('fake start edge: {} loc: {:.4f} scale: {:.4f}'.format(
+                        [int(v) for v in e], fake_times.mean(), fake_times.std()))
 
-                        fake_ax = ax[i+j, 1]
-                        fake_mask = fake_walks[:, 0] == e
-                        fake_times = fake_walks[fake_mask][:, 1]
-                        fake_ax.hist(fake_times, range=[-0.5, 1.5], bins=200)
-                        fake_ax.set_title('fake start node: {} loc: {:.4f} scale: {:.4f}'.format(
-                            int(e), fake_times.mean(), fake_times.std()))
-
-                    plt.tight_layout()
-                    plt.savefig('{}/iter_{}_validation.png'.format(output_directory, _it+1))
-                    plt.close()
-                except: log('plotting function got error, continue training...')
+                plt.tight_layout()
+                plt.savefig('{}/iter_{}_validation.png'.format(output_directory, _it+1))
+                plt.close()
+                # except: log('plotting function got error, continue training...')
 
                 fake_graph_file = "{}/{}_assembled_graph_iter_{}.npz".format(output_directory, timestr, _it + 1)
                 np.savez_compressed(fake_graph_file, fake_walks=fake_walks, real_walks=real_walks)
@@ -1141,35 +1191,35 @@ if __name__ == '__main__':
 
     tggan.session.run(tggan.init_op)
 
-    # fake_x_inputs, fake_t0_res_inputs, fake_v_inputs, fake_tau_inputs, fake_lengths, \
-    # real_data, real_x_inputs, real_t0_res_inputs, real_v_inputs, real_tau_inputs, real_lengths, \
-    # disc_real, disc_fake, x_output, t0_wait, t0_input \
+    # fake_x_inputs, fake_t0_res_inputs, fake_v_inputs, fake_u_inputs, fake_tau_inputs, fake_lengths, \
+    # real_data, real_x_inputs, real_t0_res_inputs, real_v_inputs, real_u_inputs, real_tau_inputs, real_lengths, \
+    # disc_real, disc_fake \
     #     = tggan.session.run([
-    #     tggan.fake_x_inputs, tggan.fake_t0_res_inputs, tggan.fake_v_inputs, tggan.fake_tau_inputs, tggan.fake_lengths,
-    #     tggan.real_data, tggan.real_x_inputs, tggan.real_t0_res_inputs, tggan.real_v_inputs, tggan.real_tau_inputs,
+    #     tggan.fake_x_inputs, tggan.fake_t0_res_inputs,
+    #     tggan.fake_v_inputs, tggan.fake_u_inputs, tggan.fake_tau_inputs, tggan.fake_lengths,
+    #     tggan.real_data, tggan.real_x_inputs, tggan.real_t0_res_inputs,
+    #     tggan.real_v_inputs, tggan.real_u_inputs, tggan.real_tau_inputs,
     #     tggan.real_lengths,
-    #     tggan.disc_real, tggan.disc_fake,
-    #     tggan.x_output, tggan.t0_wait, tggan.t0_input,
+    #     tggan.disc_real, tggan.disc_fake
     # ], feed_dict={tggan.temp: temperature})
     #
     # tggan.session.close()
     #
-    # print('x_output:\n', x_output)
-    # print('t0_wait:\n', t0_wait)
-    # print('t0_input:\n', t0_input)
     # print('real_data:\n', real_data)
     # print('real_x_inputs:\n', real_x_inputs)
     # print('real_t0_res_inputs:\n', real_t0_res_inputs)
     # print('real_v_inputs:\n', np.argmax(real_v_inputs, axis=-1))
+    # print('real_u_inputs:\n', np.argmax(real_u_inputs, axis=-1))
     # print('real_tau_inputs:\n', real_tau_inputs)
     # print('real_lengths:\n', real_lengths)
     #
     # print('fake_x_inputs:\n', fake_x_inputs)
     # print('fake_t0_res_inputs:\n', fake_t0_res_inputs)
     # print('fake_v_inputs:\n', np.argmax(fake_v_inputs, axis=-1))
+    # print('fake_u_inputs:\n', np.argmax(fake_u_inputs, axis=-1))
     # print('fake_tau_inputs:\n', fake_tau_inputs)
     # print('fake_lengths:\n', fake_lengths)
-    #
+
     # print('disc_real:\n', disc_real)
     # print('disc_fake:\n', disc_fake)
 
