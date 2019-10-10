@@ -66,7 +66,10 @@ class TGGAN:
 
     def __init__(self, N, rw_len, walk_generator,
                  t_end,
+                 generator_start_up_layers=[32],
+                 generator_deconv_output_depth=40,
                  generator_start_layers=[30],
+                 discriminator_start_layers=[30],
                  generator_layers=[40],
                  discriminator_layers=[30],
                  W_down_generator_size=128,
@@ -74,8 +77,9 @@ class TGGAN:
                  batch_size=128, noise_dim=16,
                  noise_type="Gaussian", learning_rate=0.0003, disc_iters=3, wasserstein_penalty=10,
                  l2_penalty_generator=1e-7, l2_penalty_discriminator=5e-5, temp_start=5.0, min_temperature=0.5,
-                 temperature_decay=1 - 5e-5, seed=15, gpu_id=0, use_gumbel=True, use_wgan=False, use_beta=False,
-                 legacy_generator=False, wgan=False):
+                 temperature_decay=1 - 5e-5, seed=15, gpu_id=0, use_gumbel=True, legacy_generator=False,
+                 use_wgan=False, use_beta=False, use_decoder=False,
+                 ):
         """
         Initialize NetGAN.
 
@@ -136,7 +140,10 @@ class TGGAN:
             't_end': t_end,
             'noise_dim': noise_dim,
             'noise_type': noise_type,
+            'generator_start_up_layers': generator_start_up_layers,
+            'generator_deconv_output_depth': generator_deconv_output_depth,
             'generator_start_layers': generator_start_layers,
+            'discriminator_start_layers': discriminator_start_layers,
             'Generator_Layers': generator_layers,
             'Discriminator_Layers': discriminator_layers,
             'W_Down_Generator_size': W_down_generator_size,
@@ -153,6 +160,7 @@ class TGGAN:
             'use_gumbel': use_gumbel,
             'use_beta': use_beta,
             'use_wgan': use_wgan,
+            'use_decoder': use_decoder,
             'legacy_generator': legacy_generator
         }
 
@@ -164,52 +172,52 @@ class TGGAN:
         self.rw_len = rw_len
         self.batch_size = self.params['batch_size']
         self.noise_dim = self.params['noise_dim']
+        self.G_t_up_layers = self.params['generator_start_up_layers']
+        self.G_t_deconv_output_depth = self.params['generator_deconv_output_depth']
         self.G_t_layers = self.params['generator_start_layers']
+        self.D_t_layers = self.params['discriminator_start_layers']
         self.G_layers = self.params['Generator_Layers']
         self.D_layers = self.params['Discriminator_Layers']
         self.temp = tf.placeholder(1.0, shape=(), name="temperature")
 
-        # W_down and W_up for generator and discriminator
-        # self.max_length = tf.constant(value=self.rw_len, name='Generator.max_length', dtype=tf.int64, shape=[1])
-        self.t_end = tf.constant(value=self.params['t_end'], name='Generator.t_end', dtype=tf.float32, shape=[1])
+        # matrix would be reused
+        self.t_end = tf.constant(value=self.params['t_end'], name='t_end',
+                                 dtype=tf.float32, shape=[1])
+
+        self.t0_deconv_filter = tf.get_variable('Generator.t0_deconv_filter',
+                                                shape=[3, self.G_t_deconv_output_depth, 1],
+                                                dtype=tf.float32,
+                                                initializer=tf.contrib.layers.xavier_initializer())
+        self.tau_deconv_filter = tf.get_variable('Generator.tau_deconv_filter',
+                                                 shape=[3, self.G_t_deconv_output_depth, 1],
+                                                 dtype=tf.float32,
+                                                 initializer=tf.contrib.layers.xavier_initializer())
+
         self.W_down_generator = tf.get_variable('Generator.W_Down',
                                                 shape=[self.N, self.params['W_Down_Generator_size']],
                                                 dtype=tf.float32,
                                                 initializer=tf.contrib.layers.xavier_initializer())
-
         self.W_down_discriminator = tf.get_variable('Discriminator.W_Down',
                                                     shape=[self.N, self.params['W_Down_Discriminator_size']],
                                                     dtype=tf.float32,
                                                     initializer=tf.contrib.layers.xavier_initializer())
 
-        self.W_up = tf.get_variable("Generator.W_up", shape=[self.G_layers[-1], self.N],
-                                    dtype=tf.float32,
-                                    initializer=tf.contrib.layers.xavier_initializer())
-
-        self.b_W_up = tf.get_variable("Generator.W_up_bias", dtype=tf.float32, initializer=tf.zeros_initializer,
-                                      shape=self.N)
-
-        self.W_tau = tf.get_variable("Generator.W_tau", shape=[self.params['W_Down_Discriminator_size'], 1],
-                                    dtype=tf.float32,
-                                    initializer=tf.contrib.layers.xavier_initializer())
-
-        self.b_W_tau = tf.get_variable("Generator.W_tau_bias", dtype=tf.float32, initializer=tf.zeros_initializer,
-                                      shape=1)
-
-        self.W_down_x_generator = tf.get_variable('Generator.W_Down_x',
-                                                shape=[2, self.params['W_Down_Discriminator_size']],
-                                                dtype=tf.float32,
-                                                initializer=tf.contrib.layers.xavier_initializer())
+        self.W_down_x_generator = tf.get_variable(name='Generator.W_Down_x', dtype=tf.float32,
+                                                  shape=[2, 1],
+                                                  initializer=tf.contrib.layers.xavier_initializer())
+        self.W_down_x_discriminator = tf.get_variable(name='Discriminator.W_Down_x', dtype=tf.float32,
+                                                  shape=[2, 1],
+                                                  initializer=tf.contrib.layers.xavier_initializer())
 
         self.generator_function = self.generator_recurrent
         self.discriminator_function = self.discriminator_recurrent
 
-        self.fake_v_inputs, self.fake_tau_inputs = self.generator_function(
-            self.batch_size, reuse=False, gumbel=use_gumbel, legacy=legacy_generator)
+        self.fake_x_inputs, self.fake_t0_res_inputs, self.fake_v_inputs, self.fake_tau_inputs = self.generator_function(
+            self.batch_size, reuse=False, decoder=use_decoder, gumbel=use_gumbel, legacy=legacy_generator)
 
         self.fake_lengths = tf.ones(name='Generator.fake_lengths', dtype=tf.int64, shape=[self.batch_size,])
 
-        self.fake_inputs_discrete = self.generate_discrete(self.batch_size, reuse=True,
+        self.fake_inputs_discrete = self.generate_discrete(self.batch_size, reuse=True, decoder=self.params['use_decoder'],
                                                            gumbel=use_gumbel, legacy=legacy_generator)
 
         # Pre-fetch real random walks
@@ -223,78 +231,83 @@ class TGGAN:
         self.real_data = batch_iterator.get_next()
         self.real_v_inputs_discrete = tf.cast(self.real_data[:, 1:, 0], dtype=tf.int64)
         self.real_v_inputs = tf.one_hot(self.real_v_inputs_discrete, self.N)
-        self.real_t0_inputs = self.real_data[:, 0:1, 0]
-        self.real_tau_inputs = tf.expand_dims(self.real_data[:, 1:, 2], axis=2)
+        self.real_x_input_discretes = tf.cast(self.real_data[:, 0, 0], dtype=tf.int64)
+        self.real_x_inputs = tf.one_hot(self.real_x_input_discretes, 2)
+        self.real_t0_res_inputs = self.real_data[:, 0:1, 2]
+        self.real_tau_inputs = self.real_data[:, 1:, 2:]
         self.real_lengths = self.get_real_input_lengths(self.real_v_inputs_discrete)
 
-        self.disc_real = self.discriminator_function(self.real_v_inputs, self.real_tau_inputs, self.real_lengths)
-        # self.disc_fake = self.discriminator_function(self.fake_inputs, self.fake_x, self.fake_y, self.fake_lengths,
-        #                                              reuse=False)
-        self.disc_fake = self.discriminator_function(self.fake_v_inputs, self.fake_tau_inputs, self.fake_lengths, reuse=True)
+        self.disc_real = self.discriminator_function(self.real_x_inputs, self.real_t0_res_inputs,
+                                                     self.real_v_inputs, self.real_tau_inputs, self.real_lengths)
+        self.disc_fake = self.discriminator_function(self.fake_x_inputs, self.fake_t0_res_inputs,
+                                                     self.fake_v_inputs, self.fake_tau_inputs, self.fake_lengths, reuse=True)
 
         self.disc_cost = tf.reduce_mean(self.disc_fake) - tf.reduce_mean(self.disc_real)
         self.gen_cost = -tf.reduce_mean(self.disc_fake)
 
-        if self.params['use_wgan']:
-            # WGAN lipschitz-penalty
-            # alpha_v = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
-            #
-            # self.differences_v = self.fake_v_inputs - self.real_v_inputs
-            # self.interpolates_v = self.real_v_inputs + (alpha_v * self.differences_v)
-            # self.gradients_v = tf.gradients(
-            #     self.discriminator_function(self.interpolates_v, self.fake_lengths, reuse=True),
-            #     [self.interpolates_v])[0]
-            # self.slopes = tf.sqrt(
-            #     tf.reduce_sum(tf.stack([
-            #         tf.reduce_sum(tf.square(self.gradients_v), reduction_indices=[1, 2]),
-            #     ]), reduction_indices=[1])
-            # )
+        if use_wgan:
+            with tf.name_scope('wgan_loss'):
+                # WGAN lipschitz-penalty
+                # alpha_v = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
+                #
+                # self.differences_v = self.fake_v_inputs - self.real_v_inputs
+                # self.interpolates_v = self.real_v_inputs + (alpha_v * self.differences_v)
+                # self.gradients_v = tf.gradients(
+                #     self.discriminator_function(self.interpolates_v, self.fake_lengths, reuse=True),
+                #     [self.interpolates_v])[0]
+                # self.slopes = tf.sqrt(
+                #     tf.reduce_sum(tf.stack([
+                #         tf.reduce_sum(tf.square(self.gradients_v), reduction_indices=[1, 2]),
+                #     ]), reduction_indices=[1])
+                # )
 
-            # alpha_v = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
-            # alpha_t0 = tf.random_uniform(shape=[self.params['batch_size'], 1], minval=0.,maxval=1.)
-            # self.differences_v = self.fake_v_inputs - self.real_v_inputs
-            # self.interpolates_v = self.real_v_inputs + (alpha_v * self.differences_v)
-            # self.differences_t0 = self.fake_t0_inputs - self.real_t0_inputs
-            # self.interpolates_t0 = self.real_t0_inputs + (alpha_t0 * self.differences_t0)
-            # self.gradients_v, self.gradients_t0 = tf.gradients(
-            #     self.discriminator_function(self.interpolates_v, self.interpolates_t0, self.fake_lengths, reuse=True),
-            #     [self.interpolates_v, self.interpolates_t0])
-            # self.slopes = tf.sqrt(
-            #     tf.reduce_sum(tf.stack([
-            #         tf.reduce_sum(tf.square(self.gradients_v), reduction_indices=[1, 2]),
-            #         tf.reduce_sum(tf.square(self.gradients_t0), reduction_indices=[1]),
-            #     ]), reduction_indices=[1])
-            # )
+                # alpha_v = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
+                # alpha_t0 = tf.random_uniform(shape=[self.params['batch_size'], 1], minval=0.,maxval=1.)
+                # self.differences_v = self.fake_v_inputs - self.real_v_inputs
+                # self.interpolates_v = self.real_v_inputs + (alpha_v * self.differences_v)
+                # self.differences_t0 = self.fake_t0_inputs - self.real_t0_inputs
+                # self.interpolates_t0 = self.real_t0_inputs + (alpha_t0 * self.differences_t0)
+                # self.gradients_v, self.gradients_t0 = tf.gradients(
+                #     self.discriminator_function(self.interpolates_v, self.interpolates_t0, self.fake_lengths, reuse=True),
+                #     [self.interpolates_v, self.interpolates_t0])
+                # self.slopes = tf.sqrt(
+                #     tf.reduce_sum(tf.stack([
+                #         tf.reduce_sum(tf.square(self.gradients_v), reduction_indices=[1, 2]),
+                #         tf.reduce_sum(tf.square(self.gradients_t0), reduction_indices=[1]),
+                #     ]), reduction_indices=[1])
+                # )
 
-            alpha_v = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
-            alpha_tau = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
-            self.differences_v = self.fake_v_inputs - self.real_v_inputs
-            self.interpolates_v = self.real_v_inputs + (alpha_v * self.differences_v)
-            self.differences_tau = self.fake_tau_inputs - self.real_tau_inputs
-            self.interpolates_tau = self.real_tau_inputs + (alpha_tau * self.differences_tau)
-            self.gradients_v, self.gradients_tau = tf.gradients(
-                self.discriminator_function(self.interpolates_v, self.interpolates_tau, self.fake_lengths, reuse=True),
-                [self.interpolates_v, self.interpolates_tau])
-            self.slopes = tf.sqrt(
-                tf.reduce_sum(tf.stack([
-                    tf.reduce_sum(tf.square(self.gradients_v), reduction_indices=[1, 2]),
-                    tf.reduce_sum(tf.square(self.gradients_tau), reduction_indices=[1, 2]),
-                ]), reduction_indices=[1])
-            )
+                alpha_v = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
+                alpha_tau = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
+                self.differences_v = self.fake_v_inputs - self.real_v_inputs
+                self.interpolates_v = self.real_v_inputs + (alpha_v * self.differences_v)
+                self.differences_tau = self.fake_tau_inputs - self.real_tau_inputs
+                self.interpolates_tau = self.real_tau_inputs + (alpha_tau * self.differences_tau)
+                self.gradients_v, self.gradients_tau = tf.gradients(
+                    self.discriminator_function(self.interpolates_v, self.interpolates_tau, self.fake_lengths, reuse=True),
+                    [self.interpolates_v, self.interpolates_tau])
+                self.slopes = tf.sqrt(
+                    tf.reduce_sum(tf.stack([
+                        tf.reduce_sum(tf.square(self.gradients_v), reduction_indices=[1, 2]),
+                        tf.reduce_sum(tf.square(self.gradients_tau), reduction_indices=[1, 2]),
+                    ]), reduction_indices=[1])
+                )
 
-            self.gradient_penalty = tf.reduce_mean((self.slopes - 1.) ** 2)
+                self.gradient_penalty = tf.reduce_mean((self.slopes - 1.) ** 2)
             self.disc_cost += self.params['Wasserstein_penalty'] * self.gradient_penalty
 
         # weight regularization; we omit W_down from regularization
-        self.disc_l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()
-                                      if 'Disc' in v.name
-                                      and not 'W_down' in v.name]) * self.params['l2_penalty_discriminator']
+        with tf.name_scope('disc_l2_loss'):
+            self.disc_l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()
+                                          if 'Disc' in v.name
+                                          and not 'W_down' in v.name]) * self.params['l2_penalty_discriminator']
         self.disc_cost += self.disc_l2_loss
 
         # weight regularization; we omit  W_down from regularization
-        self.gen_l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()
-                                     if 'Gen' in v.name
-                                     and not 'W_down' in v.name]) * self.params['l2_penalty_generator']
+        with tf.name_scope('gen_l2_loss'):
+            self.gen_l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()
+                                         if 'Gen' in v.name
+                                         and not 'W_down' in v.name]) * self.params['l2_penalty_generator']
         self.gen_cost += self.gen_l2_loss
 
         self.gen_params = [v for v in tf.trainable_variables() if 'Generator' in v.name]
@@ -304,6 +317,13 @@ class TGGAN:
                                                    beta2=0.9).minimize(self.gen_cost, var_list=self.gen_params)
         self.disc_train_op = tf.train.AdamOptimizer(learning_rate=self.params['learning_rate'], beta1=0.5,
                                                     beta2=0.9).minimize(self.disc_cost, var_list=self.disc_params)
+
+        with tf.name_scope('performance'):
+            self.tf_disc_cost_ph = tf.placeholder(tf.float32,shape=None,name='disc_cost_summary')
+            tf_disc_cost_summary = tf.summary.scalar('disc_cost', self.tf_disc_cost_ph)
+            self.tf_gen_cost_ph = tf.placeholder(tf.float32,shape=None,name='gen_cost_summary')
+            tf_gen_cost_summary = tf.summary.scalar('gen_cost', self.tf_gen_cost_ph)
+        self.performance_summaries = tf.summary.merge([tf_disc_cost_summary, tf_gen_cost_summary])
 
         if gpu_id is None:
             config = tf.ConfigProto(
@@ -316,7 +336,7 @@ class TGGAN:
         self.session = tf.InteractiveSession(config=config)
         self.init_op = tf.global_variables_initializer()
 
-    def discriminator_recurrent(self, edges, ts, lengths, reuse=None):
+    def discriminator_recurrent(self, x, t0_res, edges, ts, lengths, reuse=None):
         """
         Discriminate real from fake random walks using LSTM.
         Parameters
@@ -337,64 +357,47 @@ class TGGAN:
             if reuse == True:
                 scope.reuse_variables()
 
+            x_input_reshape = tf.reshape(x, [-1, 2])
+            x_input_reshape = tf.matmul(x_input_reshape, self.W_down_x_discriminator)
+            x_input_reshape = tf.layers.dense(x_input_reshape, int(self.W_down_discriminator.get_shape()[-1]),
+                                              reuse=reuse, name="Discriminator.x_up_scale",
+                                              kernel_initializer=tf.contrib.layers.xavier_initializer())
+
+            t0_inputs = tf.reshape(t0_res, [-1, 1])
+            for ix, size in enumerate(self.D_layers):
+                t0_inputs = tf.layers.dense(t0_inputs, size, name="Discriminator.t0_res_{}".format(ix), reuse=reuse,
+                                           activation=tf.nn.tanh,
+                                           kernel_initializer=tf.contrib.layers.xavier_initializer())
+
+            x_t0_inputs = tf.concat([x_input_reshape, t0_inputs], axis=1)
+
             def lstm_cell(lstm_size):
                 return tf.contrib.rnn.BasicLSTMCell(lstm_size, reuse=tf.get_variable_scope().reuse)
-            # disc_t0_lstm_cell = tf.contrib.rnn.MultiRNNCell([lstm_cell(size) for size in self.D_layers])
             disc_lstm_cell = tf.contrib.rnn.MultiRNNCell([lstm_cell(size) for size in self.D_layers])
-
-            # t0_input = tf.layers.dense(t0, self.D_layers[-1],
-            #                            name='Discriminator.t0_inputs', reuse=reuse, activation=tf.nn.tanh)
-            # t0_input = [t0_input]
-            # output_t0, state_t0 = tf.nn.static_rnn(cell=disc_t0_lstm_cell,
-            #                                                     inputs=[t0],
-            #                                                     dtype='float32')
 
             v_input_reshape = tf.reshape(edges, [-1, self.N])
             v_input_reshape = tf.matmul(v_input_reshape, self.W_down_discriminator)
             v_input_reshape = tf.reshape(v_input_reshape, [-1, self.rw_len, int(self.W_down_discriminator.get_shape()[-1])])
 
-            t_inputs = ts[:, :, 0]
+            t_inputs = tf.reshape(ts, [-1, 1])
             for ix, size in enumerate(self.D_layers):
-                t_inputs = tf.layers.dense(t_inputs, size, reuse=reuse, name="Discriminator.t_{}".format(ix),
+                t_inputs = tf.layers.dense(t_inputs, size, name="Discriminator.t_{}".format(ix), reuse=reuse,
                                            activation=tf.nn.tanh,
                                            kernel_initializer=tf.contrib.layers.xavier_initializer())
-            t_inputs = tf.expand_dims(t_inputs, axis=1)
+            t_inputs = tf.reshape(t_inputs, [-1, self.rw_len, self.D_layers[-1]])
 
             input_reshape = tf.concat([v_input_reshape, t_inputs], axis=2)
-            inputs = tf.unstack(input_reshape, axis=1)
+
+            inputs = [x_t0_inputs] + tf.unstack(input_reshape, axis=1)
 
             output_disc, state_disc = tf.contrib.rnn.static_rnn(cell=disc_lstm_cell,
                                                                 inputs=inputs,
                                                                 dtype='float32',
-                                                                sequence_length=lengths,
+                                                                sequence_length=tf.math.add(lengths, 1),
                                                                 )
 
             last_output = output_disc[-1]
-            # last_output = tf.concat([last_output, t0_input], axis=1)
-
             final_score = tf.layers.dense(last_output, 1, reuse=reuse, name="Discriminator.Out")
-
-        # with tf.variable_scope('Discriminator') as scope:
-        #     if reuse == True:
-        #         scope.reuse_variables()
-        #
-        #     v_input_reshape = tf.reshape(edges, [-1, self.N])
-        #     v_input_reshape = tf.matmul(v_input_reshape, self.W_down_discriminator)
-        #     v_input_reshape = tf.reshape(v_input_reshape, [-1, self.rw_len, int(self.W_down_discriminator.get_shape()[-1])])
-        #     inputs = tf.unstack(v_input_reshape, axis=1)
-        #
-        #     def lstm_cell(lstm_size):
-        #         return tf.contrib.rnn.BasicLSTMCell(lstm_size, reuse=tf.get_variable_scope().reuse)
-        #     disc_lstm_cell = tf.contrib.rnn.MultiRNNCell([lstm_cell(size) for size in self.D_layers])
-        #
-        #     output_disc, state_disc = tf.contrib.rnn.static_rnn(cell=disc_lstm_cell,
-        #                                                         inputs=inputs,
-        #                                                         dtype='float32',
-        #                                                         sequence_length=lengths,
-        #                                                         )
-        #
-        #     last_output = output_disc[-1]
-        #     final_score = tf.layers.dense(last_output, 1, reuse=reuse, name="Discriminator.Out")
 
             return final_score
 
@@ -405,7 +408,7 @@ class TGGAN:
         lengths = tf.math.reduce_sum(tf.cast(tf.math.less(-1, tf.cast(inputs_discrete, dtype=tf.int32)), dtype=tf.int64), axis=1)
         return lengths
 
-    def generator_recurrent(self, n_samples, reuse=None, z=None, gumbel=True, decoder=True, legacy=False):
+    def generator_recurrent(self, n_samples, reuse=None, z=None, x=None, t0=None, gumbel=True, decoder=True, legacy=False):
         """
         Generate random walks using LSTM.
         Parameters
@@ -437,42 +440,82 @@ class TGGAN:
             else:
                 initial_states_noise = z
 
-            # # generate start node binary if not need
-            # if t0: t0_res = t0
-            # else:
-            #     # t_start_wait = initial_states_noise
-            #     # for ix, size in enumerate(self.G_t_layers):
-            #     #     t_start_wait = tf.layers.dense(t_start_wait, size, name="Generator.t0_{}".format(ix + 1), reuse=reuse,
-            #     #                                activation=tf.nn.tanh)
-            #     # t_start_wait = tf.layers.dense(t_start_wait, 1, name="Generator.t0_wait", reuse=reuse,
-            #     #                      activation=tf.nn.sigmoid)
-            #     # t0_res = tf.nn.relu(self.t_end - t_start_wait, name='Generator.t0_res')
-            #
-            #     ### Perform variational decoder to ensure gradients flow for t
-            #     if decoder:
-            #         mu_start = initial_states_noise
-            #         sigma_start = initial_states_noise
-            #         for ix, size in enumerate(self.G_t_layers):
-            #             mu_start = tf.layers.dense(mu_start, size, name="Generator.mu_t0_{}".format(ix),
-            #                                        reuse=reuse, activation=tf.nn.tanh)
-            #             sigma_start = tf.layers.dense(sigma_start, size, name="Generator.sigma_t0_{}".format(ix),
-            #                                           reuse=reuse, activation=tf.nn.tanh)
-            #         mu_start = tf.layers.dense(mu_start, 1, name="Generator.mu_t0_last", reuse=reuse,
-            #                                   activation=tf.nn.tanh)
-            #         sigma_start = tf.layers.dense(sigma_start, 1, name="Generator.sigma_t0_last", reuse=reuse,
-            #                                      activation=tf.nn.tanh)
-            #         # t_start_wait = tf.nn.relu(self.var_decoder(mu_start, sigma_start), name="Generator.t0_wait")
-            #         t_start_wait = self.var_decoder(mu_start, sigma_start)
-            #     else:
-            #         t_start_wait = tf.nn.relu(tf.layers.dense(initial_states_noise, 1, name="Generator.start_t_decoder",
-            #                                           activation=tf.nn.sigmoid))
-            #
-            #     t0_res = tf.nn.relu(self.t_end - t_start_wait, name='Generator.t0_res')
+            # generate start x, and its residual time
+            x_output = None
+            if x:
+                x_output = x
+            else:
+                # generate start node binary if not need
+                x_logit = initial_states_noise
+                for ix, size in enumerate(self.G_t_layers):
+                    x_logit = tf.layers.dense(x_logit, size, name="Generator.x_logit_{}".format(ix),
+                                              reuse=reuse, activation=tf.nn.tanh)
+                x_logit = tf.layers.dense(x_logit, 2, name="Generator.x_logit_last",
+                                          reuse=reuse, activation=None)
+
+                # Perform Gumbel softmax to ensure gradients flow for e, and end node y
+                if gumbel:
+                    x_output = self.gumbel_softmax(x_logit, temperature=self.temp, hard=True)
+                else:
+                    x_output = tf.nn.softmax(x_logit)
+
+                # Back to dimension 2 of x
+                x_input = tf.matmul(x_output, self.W_down_x_generator)
+
+            t0_res_output = None
+            if t0:
+                t0_res_output = t0
+            else:
+                with tf.name_scope('t0_decoder'):
+                    if decoder:
+                        with tf.name_scope('t0_decoder'):
+                            # loc_t0 = tf.concat([x_input, initial_states_noise], axis=1)
+                            # scale_t0 = tf.concat([x_input, initial_states_noise], axis=1)
+                            loc_t0 = x_input
+                            scale_t0 = x_input
+                            for ix, size in enumerate(self.G_t_layers):
+                                loc_t0 = tf.layers.dense(loc_t0, size, name="Generator.loc_t0_{}".format(ix),
+                                                         reuse=reuse, activation=tf.nn.tanh)
+                                scale_t0 = tf.layers.dense(scale_t0, size,
+                                                           name="Generator.scale_t0_{}".format(ix),
+                                                           reuse=reuse, activation=tf.nn.tanh)
+                            loc_t0 = tf.layers.dense(loc_t0, 1, name="Generator.loc_t0_last", reuse=reuse,
+                                                     activation=None)
+                            scale_t0 = tf.layers.dense(scale_t0, 1, name="Generator.scale_t0_last", reuse=reuse,
+                                                       activation=None)
+
+                            t0_wait = [tf.truncated_normal(
+                                [1], mean=loc_t0[i, 0], stddev=scale_t0[i, 0]) for i in range(self.batch_size)]
+                            t0_wait = tf.stack(t0_wait, axis=0)
+                    else:
+                        with tf.name_scope('t0_deep_decoder'):
+                            t0_wait = x_input
+                            for ix, size in enumerate(self.G_t_up_layers):
+                                t0_wait = tf.layers.dense(t0_wait, size, name="Generator.t0_up_{}".format(ix),
+                                                         reuse=reuse, activation=tf.nn.tanh)
+                            t0_wait = tf.expand_dims(t0_wait, axis=2)
+
+                            # deconvolutional
+                            n_strides = 2
+                            t0_wait = tf.nn.conv1d_transpose(t0_wait, filters=self.t0_deconv_filter,
+                                                             output_shape=[self.batch_size, self.G_t_up_layers[-1]*n_strides, self.G_t_deconv_output_depth],
+                                                             strides=n_strides, padding='SAME',
+                                                             name='Generator.t0_deconv')
+                            choice = tf.random_uniform([1], maxval=t0_wait.get_shape()[1], dtype=tf.int64)[0]
+                            t0_wait = t0_wait[:, choice, :]
+                            t0_wait = tf.layers.dense(t0_wait, 1, name="Generator.t0_last", reuse=reuse, activation=None)
+
+                # t0_output = tf.nn.relu(self.t_end - t0_wait, name='Generator.t0_res')
+                condition = tf.math.equal(tf.argmax(x_output, axis=-1), 1)
+                t0_res_output = tf.where(condition, tf.ones_like(t0_wait), t0_wait)
+                t0_input = t0_res_output
 
             # generate input vector for lstm from x
-            inputs = tf.zeros([n_samples, self.params['W_Down_Generator_size']])
-            # inputs = tf.layers.dense(t0_res, self.params['W_Down_Generator_size'],
-            #                          name='Generator.t0_res_inputs', reuse=reuse, activation=tf.nn.tanh)
+            # inputs = tf.zeros([n_samples, self.params['W_Down_Generator_size']])
+            inputs = tf.concat([x_input, t0_input], axis=1)
+            # inputs = tf.concat([x_input, t0_input, initial_states_noise], axis=1)
+            inputs = tf.layers.dense(inputs, self.params['W_Down_Generator_size'],
+                                     name="Generator.x_t0_inputs", reuse=reuse)
 
             # initial lstm states from noise
             initial_states = []
@@ -506,10 +549,10 @@ class TGGAN:
 
             def lstm_cell(lstm_size, name):
                 return tf.contrib.rnn.BasicLSTMCell(lstm_size, reuse=tf.get_variable_scope().reuse, 
-                                                    name="Generator.{}".format(name))
+                                                    name="Generator.lstm_cell_{}".format(name))
 
             self.stacked_lstm = tf.contrib.rnn.MultiRNNCell(
-                [lstm_cell(size, "lstm_{}".format(size)) for size in self.G_layers])
+                [lstm_cell(size, str(size)) for size in self.G_layers])
 
             # LSTM steps
             state = initial_states
@@ -520,7 +563,7 @@ class TGGAN:
                 output, state = self.stacked_lstm.call(inputs, state)
 
                 # Blow up to dimension N x N using W_up
-                v_logit = tf.matmul(output, self.W_up) + self.b_W_up
+                v_logit = tf.layers.dense(output, self.N, name="Generator.W_up_v", activation=None)
 
                 # Perform Gumbel softmax to ensure gradients flow for e, and end node y
                 if gumbel:
@@ -529,79 +572,58 @@ class TGGAN:
                     v_output = tf.nn.softmax(v_logit)
 
                 # Back to dimension d
-                inputs = tf.matmul(v_output, self.W_down_generator)
-
-                # generate \tau with decoder sampling
+                v_inputs = tf.matmul(v_output, self.W_down_generator)
 
                 if decoder:
-                    if not self.params['use_beta']:
-                        loc = inputs
-                        scale = inputs
+                    with tf.name_scope('tau_decoder'):
+                        loc = output
+                        scale = output
                         for ix, size in enumerate(self.G_t_layers):
                             loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
-                                                  reuse=reuse, activation=tf.nn.tanh,
+                                                  activation=tf.nn.tanh,
                                                   kernel_initializer=tf.contrib.layers.xavier_initializer())
                             scale = tf.layers.dense(scale, size, name="Generator.scale_tau_{}".format(ix),
-                                                    reuse=reuse, activation=tf.nn.tanh,
+                                                    activation=tf.nn.tanh,
                                                     kernel_initializer=tf.contrib.layers.xavier_initializer())
-                        loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", reuse=reuse, activation=None)
-                        scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", reuse=reuse, activation=None)
-                        tau = [tf.truncated_normal([1], mean=loc[i, 0], stddev=scale[i, 0]) for i in range(self.batch_size)]
-                        tau = tf.stack(tau, axis=0)
-                    else:
-                        loc = inputs
-                        scale = inputs
-                        for ix, size in enumerate(self.G_t_layers):
-                            loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
-                                                  reuse=reuse, activation=tf.nn.tanh,
-                                                  kernel_initializer=tf.contrib.layers.xavier_initializer())
-                            scale = tf.layers.dense(scale, size, name="Generator.scale_tau_{}".format(ix),
-                                                    reuse=reuse, activation=tf.nn.tanh,
-                                                    kernel_initializer=tf.contrib.layers.xavier_initializer())
-                        loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", reuse=reuse, activation=None)
-                        scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", reuse=reuse, activation=None)
-                        tau = self.beta_decoder(_alpha_param=loc, _beta_param=scale)
+                        loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", activation=None)
+                        scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", activation=None)
+
+                        if not self.params['use_beta']:
+                            tau = [tf.truncated_normal(
+                                [1], mean=loc[i, 0], stddev=scale[i, 0]) for i in range(self.batch_size)]
+                            tau = tf.stack(tau, axis=0)
+                        else:
+                            tau = self.beta_decoder(_alpha_param=loc, _beta_param=scale)
                 else:
-                    tau = tf.layers.dense(initial_states_noise, 1, name="Generator.tau_decoder", reuse=reuse, activation=None)
+                    with tf.name_scope('tau_deep_decoder'):
+                        tau = output
+                        for ix, size in enumerate(self.G_t_up_layers):
+                            tau = tf.layers.dense(tau, size, name="Generator.tau_{}".format(ix),
+                                                  activation=tf.nn.tanh,
+                                                  kernel_initializer=tf.contrib.layers.xavier_initializer())
+                        tau = tf.expand_dims(tau, axis=2)
 
-                # # generate \tau with decoder sampling
-                # if decoder:
-                #     loc = inputs
-                #     scale = inputs
-                #     for ix, size in enumerate(self.G_t_layers):
-                #         loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
-                #                               reuse=reuse, activation=tf.nn.tanh,
-                #                               kernel_initializer=tf.contrib.layers.xavier_initializer())
-                #         scale = tf.layers.dense(scale, size, name="Generator.scale_tau_{}".format(ix),
-                #                                 reuse=reuse, activation=tf.nn.tanh,
-                #                                 kernel_initializer=tf.contrib.layers.xavier_initializer())
-                #     loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", reuse=reuse, activation=None)
-                #     scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", reuse=reuse, activation=None)
-                #
-                #     posterior_mean = tf.random_normal([self.batch_size,], mean=loc, stddev=scale)
-                #     posterior_scale = tf.concat([posterior_mean, inputs], axis=1)
-                #     for ix, size in enumerate(self.G_t_layers):
-                #         posterior_scale = tf.layers.dense(posterior_scale, size, name="Generator.posterior_scale_tau_{}".format(ix),
-                #                                 reuse=reuse, activation=tf.nn.tanh,
-                #                                 kernel_initializer=tf.contrib.layers.xavier_initializer())
-                #     posterior_scale = tf.layers.dense(posterior_scale, 1, name="Generator.posterior_scale_tau_last",
-                #                                   reuse=reuse, activation=None)
-                # tau = [tf.random_normal([1], mean=posterior_mean[i, 0], stddev=posterior_scale[i, 0]) for i in range(self.batch_size)]
-                # tau = tf.stack(tau, axis=0)
-                # else:
-                #     tau = tf.layers.dense(initial_states_noise, 1, name="Generator.tau_decoder", reuse=reuse, activation=None)
-                #
-                # tau_outputs.append(tau)
+                        # deconvolutional
+                        n_strides = 2
+                        tau = tf.nn.conv1d_transpose(tau, filters=self.tau_deconv_filter,
+                                                         output_shape=[self.batch_size,
+                                                                       self.G_t_up_layers[-1] * n_strides,
+                                                                       self.G_t_deconv_output_depth],
+                                                         strides=n_strides, padding='SAME',
+                                                         name='Generator.tau_deconv')
+                        choice = tf.random_uniform([1], maxval=tau.get_shape()[1], dtype=tf.int64)[0]
+                        tau = tau[:, choice, :]
+                        tau = tf.layers.dense(tau, 1, name="Generator.tau_last",
+                                              activation=None)
 
-                # if i == 0: t_outputs.append(tau)
-                # else: t_outputs.append(tf.math.add(tau, t_outputs[-1]))
-
+                inputs = tf.concat([v_inputs, tau], axis=1)
+                inputs = tf.layers.dense(inputs, self.params['W_Down_Generator_size'], name="Generator.e_tau_inputs")
                 v_outputs.append(v_output)
                 tau_outputs.append(tau)
 
             v_outputs = tf.stack(v_outputs, axis=1)
             tau_outputs = tf.stack(tau_outputs, axis=1)
-        return v_outputs, tau_outputs
+        return x_output, t0_res_output, v_outputs, tau_outputs
 
     def beta_decoder(self, _alpha_param, _beta_param, B = 5):
         # B is for shape augmentation
@@ -650,7 +672,7 @@ class TGGAN:
         t = mu + sigma*eps
         return t
 
-    def generate_discrete(self, n_samples, reuse=True, z=None, gumbel=True, legacy=False):
+    def generate_discrete(self, n_samples, reuse=True, z=None, decoder=True, gumbel=True, legacy=False):
         """
         Generate a random walk in index representation (instead of one hot). This is faster but prevents the gradients
         from flowing into the generator, so we only use it for evaluation purposes.
@@ -675,11 +697,12 @@ class TGGAN:
 
 
         """
-        fake_v_outputs, fake_tau_outputs = self.generator_function(n_samples, reuse, z,
-                                                                 gumbel=gumbel, legacy=legacy)
+        fake_x_output, fake_t0_res_output, fake_v_outputs, fake_tau_outputs = self.generator_function(n_samples, reuse, z,
+                                                                 decoder=self.params['use_decoder'], gumbel=gumbel, legacy=legacy)
         fake_v_outputs_discrete = tf.argmax(fake_v_outputs, axis=-1)
+        fake_x_outputs_discrete = tf.argmax(fake_x_output, axis=-1)
 
-        return fake_v_outputs_discrete, fake_tau_outputs
+        return fake_x_outputs_discrete, fake_t0_res_output, fake_v_outputs_discrete, fake_tau_outputs
 
     def train(self, n_eval_loop, max_iters=50000, stopping=None, eval_transitions=15e6,
               transitions_per_iter=150000, max_patience=5, eval_every=500, plot_every=-1,
@@ -734,6 +757,12 @@ class TGGAN:
 
         """
 
+        starting_time = time.time()
+        saver = tf.train.Saver()
+        timestr = time.strftime("%Y%m%d-%H%M%S")
+        tensorboard_log_path = './graph'
+        model_number = 0
+
         if stopping == None:  # use VAL criterion
             best_performance = 0.0
             patience = max_patience
@@ -743,25 +772,6 @@ class TGGAN:
             assert "float" in str(type(stopping)) and stopping > 0 and stopping <= 1
             log("**** Using EO criterion of {} for early stopping".format(stopping))
 
-        if not os.path.isdir(save_directory):
-            os.makedirs(save_directory)
-
-        # if model_name is None:
-        #     # Find the file corresponding to the lowest vacant model number to store the snapshots into.
-        #     model_number = 0
-        #     while os.path.exists("{}/model_best_{}.ckpt".format(save_directory, model_number)):
-        #         model_number += 1
-        #     save_file = "{}/model_best_{}.ckpt".format(save_directory, model_number)
-        #     open(save_file, 'a').close()  # touch file
-        # else:
-        #     save_file = "{}/{}_best.ckpt".format(save_directory, model_name)
-        # print("**** Saving snapshots into {} ****".format(save_file))
-
-        starting_time = time.time()
-        saver = tf.train.Saver()
-        timestr = time.strftime("%Y%m%d-%H%M%S")
-        model_number = 0
-
         if not continue_training:
             log("**** Initializing... ****")
             self.session.run(self.init_op)
@@ -769,15 +779,23 @@ class TGGAN:
         else:
             log("**** Continuing training without initializing weights. ****")
             # Find the file corresponding to the lowest vacant model number to store the snapshots into.
-
             while os.path.exists("{}/{}_iter_{}.ckpt".format(save_directory, model_name, model_number)):
                 model_number += eval_every
             model_number -= eval_every
             save_file = "{}/{}_iter_{}.ckpt".format(save_directory, model_name, model_number)
             saver.restore(self.session, save_file)
 
+        if not os.path.isdir(save_directory):
+            os.makedirs(save_directory)
+
         if not os.path.isdir(output_directory):
             os.makedirs(output_directory)
+
+        if not os.path.isdir(tensorboard_log_path):
+            os.makedirs(tensorboard_log_path)
+
+        log("**** save computing graph to tensorboard in folder {}. ****".format(tensorboard_log_path))
+        summ_writer = tf.summary.FileWriter(tensorboard_log_path, self.session.graph)
 
         # # Validation labels
         # actual_labels_val = np.append(np.ones(len(val_ones)), np.zeros(len(val_zeros)))
@@ -825,11 +843,14 @@ class TGGAN:
                 _disc_l.append(disc_loss)
             gen_losses.append(gen_loss)
             disc_losses.append(np.mean(_disc_l))
+            summ = self.session.run(self.performance_summaries,
+                               feed_dict={self.tf_disc_cost_ph: gen_loss, self.tf_gen_cost_ph: np.mean(_disc_l)})
+            summ_writer.add_summary(summ, _it)
 
             if (_it + 1) % 1000 == 0:
-                log('gen_loss: {} disc_loss: {}'.format(gen_loss, np.mean(_disc_l)))
-                log('disc_fake max:{} min:{} shape:{}'.format(disc_fake.max(), disc_fake.min(), disc_fake.shape))
-                log('disc_real max:{} min:{} shape:{}'.format(disc_real.max(), disc_real.min(), disc_real.shape))
+                log('gen_loss: {:.4f} disc_loss: {:.4f}'.format(gen_loss, np.mean(_disc_l)))
+                log('disc_fake max:{:.4f} min:{:.4f} shape:{}'.format(disc_fake.max(), disc_fake.min(), disc_fake.shape))
+                log('disc_real max:{:.4f} min:{:.4f} shape:{}'.format(disc_real.max(), disc_real.min(), disc_real.shape))
 
             # Evaluate the model's progress.
             if (_it+1) % eval_every == 0:
@@ -842,23 +863,98 @@ class TGGAN:
                 log('**** Starting Evaluation ****')
 
                 fake_walks = []
+                fake_x_t0 = []
                 real_walks = []
+                real_x_t0 = []
                 for _ in range(n_eval_iters):
                     smpls = self.session.run([sample_many], {self.temp: 0.5})
-                    fake_v, fake_t = smpls[0]
+                    fake_x, fake_t0, fake_v, fake_t = smpls[0]
                     # print('fake_t:\n {} \nfake_v: \n{}'.format(fake_t, fake_v))
 
                     smpls = np.stack([fake_v[:, 0], fake_t[:, 0, 0]], axis=1)
                     fake_walks.append(smpls)
+                    fake_start = np.stack([fake_x, fake_t0[:, 0]], axis=1)
+                    fake_x_t0.append(fake_start)
 
-                    real_v, real_t0, real_tau = self.session.run([
-                        self.real_v_inputs_discrete, self.real_t0_inputs, self.real_tau_inputs
+                    real_x, real_t0, real_v, real_tau = self.session.run([
+                        self.real_x_input_discretes, self.real_t0_res_inputs, self.real_v_inputs_discrete, self.real_tau_inputs
                     ],feed_dict={self.temp: 0.5})
-                    # walk = np.stack([real_t0[:, 0], real_v[:, 0]], axis=1)
+
                     walk = np.stack([real_v[:, 0], real_tau[:, 0, 0]], axis=1)
                     real_walks.append(walk)
+                    real_start = np.stack([real_x, real_t0[:, 0]], axis=1)
+                    real_x_t0.append(real_start)
+
                 fake_walks = np.array(fake_walks).reshape(-1, 2)
+                fake_x_t0 = np.array(fake_x_t0).reshape(-1, 2)
                 real_walks = np.array(real_walks).reshape(-1, 2)
+                real_x_t0 = np.array(real_x_t0).reshape(-1, 2)
+
+                # plot edges time series for qualitative evaluation
+                real_v_list, real_v_counts = np.unique(real_walks[:, 0], return_counts=True)
+                fake_v_list, fake_v_counts = np.unique(fake_walks[:, 0], return_counts=True)
+                real_x_list, real_x_counts = np.unique(real_x_t0[:, 0], return_counts=True)
+                fake_x_list, fake_x_counts = np.unique(fake_x_t0[:, 0], return_counts=True)
+                n_v = len(real_v_list)
+                try:
+                    fig, ax = plt.subplots(n_v+4, 2, figsize=(2*9, (n_v+4)*4))
+
+                    i = 0
+                    real_ax = ax[i, 0]
+                    real_ax.bar(real_x_list, real_x_counts)
+                    real_ax.set_xlim([-1, 2])
+                    real_ax.set_title('real start x number: {}'.format(len(real_x_list)))
+                    fake_ax = ax[i, 1]
+                    fake_ax.bar(fake_x_list, fake_x_counts)
+                    fake_ax.set_xlim([-1, 2])
+                    fake_ax.set_title('fake start x number: {}'.format(len(fake_x_list)))
+
+                    for i, e in enumerate([0, 1]):
+                        j = 1
+                        real_ax = ax[i+j, 0]
+                        real_mask = real_x_t0[:, 0] == e
+                        real_times = real_x_t0[real_mask][:, 1]
+                        real_ax.hist(real_times, range=[-0.5, 1.5], bins=200)
+                        real_ax.set_title('real x node: {} loc: {:.4f} scale: {:.4f}'.format(
+                            int(e), real_times.mean(), real_times.std()))
+
+                        fake_ax = ax[i+j, 1]
+                        fake_mask = fake_x_t0[:, 0] == e
+                        fake_times = fake_x_t0[fake_mask][:, 1]
+                        fake_ax.hist(fake_times, range=[-0.5, 1.5], bins=200)
+                        fake_ax.set_title('fake x node: {} loc: {:.4f} scale: {:.4f}'.format(
+                            int(e), fake_times.mean(), fake_times.std()))
+
+                    i = 3
+                    real_ax = ax[i, 0]
+                    real_ax.bar(real_v_list, real_v_counts)
+                    real_ax.set_xlim([-1, self.N+1])
+                    real_ax.set_title('real nodes number: {}'.format(len(real_v_list)))
+                    fake_ax = ax[i, 1]
+                    fake_ax.bar(fake_v_list, fake_v_counts)
+                    fake_ax.set_xlim([-1, self.N+1])
+                    fake_ax.set_title('fake nodes number: {}'.format(len(fake_v_list)))
+
+                    for i, e in enumerate(real_v_list):
+                        j = 4
+                        real_ax = ax[i+j, 0]
+                        real_mask = real_walks[:, 0] == e
+                        real_times = real_walks[real_mask][:, 1]
+                        real_ax.hist(real_times, range=[-0.5, 1.5], bins=200)
+                        real_ax.set_title('real start node: {} loc: {:.4f} scale: {:.4f}'.format(
+                            int(e), real_times.mean(), real_times.std()))
+
+                        fake_ax = ax[i+j, 1]
+                        fake_mask = fake_walks[:, 0] == e
+                        fake_times = fake_walks[fake_mask][:, 1]
+                        fake_ax.hist(fake_times, range=[-0.5, 1.5], bins=200)
+                        fake_ax.set_title('fake start node: {} loc: {:.4f} scale: {:.4f}'.format(
+                            int(e), fake_times.mean(), fake_times.std()))
+
+                    plt.tight_layout()
+                    plt.savefig('{}/iter_{}_validation.png'.format(output_directory, _it+1))
+                    plt.close()
+                except: log('plotting function got error, continue training...')
 
                 fake_graph_file = "{}/{}_assembled_graph_iter_{}.npz".format(output_directory, timestr, _it + 1)
                 np.savez_compressed(fake_graph_file, fake_walks=fake_walks, real_walks=real_walks)
@@ -867,41 +963,6 @@ class TGGAN:
                 save_file = "{}/{}_iter_{}.ckpt".format(save_directory, model_name, _it+1)
                 d = saver.save(self.session, save_file)
                 log("**** Saving snapshots into {} ****".format(save_file))
-
-                # plot edges time series for qualitative evaluation
-                real_v_list, real_v_counts = np.unique(real_walks[:, 0], return_counts=True)
-                fake_v_list, fake_v_counts = np.unique(fake_walks[:, 0], return_counts=True)
-                n_v = len(real_v_list)
-
-                fig, ax = plt.subplots(n_v+1, 2, figsize=(2*9, (n_v+1)*4))
-
-                real_ax = ax[0, 0]
-                real_ax.bar(real_v_list, real_v_counts)
-                real_ax.set_xlim([-1, self.N+1])
-                real_ax.set_title('real nodes number: {}'.format(len(real_v_list)))
-                fake_ax = ax[0, 1]
-                fake_ax.bar(fake_v_list, fake_v_counts)
-                fake_ax.set_xlim([-1, self.N+1])
-                fake_ax.set_title('fake nodes number: {}'.format(len(fake_v_list)))
-
-                for i, e in enumerate(real_v_list):
-                    real_ax = ax[i+1, 0]
-                    real_mask = real_walks[:, 0] == e
-                    real_times = real_walks[real_mask][:, 1]
-                    real_ax.hist(real_times, range=[-0.5, 1.5], bins=200)
-                    real_ax.set_title('start node: {} loc: {:.4f} scale: {:.4f}'.format(
-                        int(e), real_times.mean(), real_times.std()))
-
-                    fake_ax = ax[i+1, 1]
-                    fake_mask = fake_walks[:, 0] == e
-                    fake_times = fake_walks[fake_mask][:, 1]
-                    fake_ax.hist(fake_times, range=[-0.5, 1.5], bins=200)
-                    fake_ax.set_title('start node: {} loc: {:.4f} scale: {:.4f}'.format(
-                        int(e), fake_times.mean(), fake_times.std()))
-
-                plt.tight_layout()
-                plt.savefig('{}/iter_{}_validation.png'.format(output_directory, _it+1))
-                plt.close()
 
             #     # Sample lots of random walks.
             #     smpls = []
@@ -948,22 +1009,28 @@ class TGGAN:
             #         break
 
             if plot_every > 0 and (_it + 1) % plot_every == 0:
-                if len(disc_losses) > 10:
-                    plt.plot(disc_losses[1000::100], label="Critic loss")
-                    plt.plot(gen_losses[1000::100], label="Generator loss")
-                else:
-                    plt.plot(disc_losses, label="Critic loss")
-                    plt.plot(gen_losses, label="Generator loss")
-                plt.legend()
-                plt.savefig('{}/iter_{}_loss_res_final.png'.format(output_directory, _it+1))
-                plt.close()
+                try:
+                    if len(disc_losses) > 10:
+                        plt.plot(disc_losses[1000::100], label="Critic loss")
+                        plt.plot(gen_losses[1000::100], label="Generator loss")
+                    else:
+                        plt.plot(disc_losses, label="Critic loss")
+                        plt.plot(gen_losses, label="Generator loss")
+                    plt.legend()
+                    plt.savefig('{}/iter_{}_loss_res_final.png'.format(output_directory, _it+1))
+                    plt.close()
+                except: log('plotting function got error, continue training...')
+
+        self.session.close()
 
         log("**** Training completed after {} iterations. ****".format(_it+1))
-        plt.plot(disc_losses[1000::], label="Critic loss")
-        plt.plot(gen_losses[1000::], label="Generator loss")
-        plt.legend()
-        plt.savefig('{}/{}_loss_res_final.png'.format(output_directory, timestr))
-        plt.close()
+        try:
+            plt.plot(disc_losses[1000::], label="Critic loss")
+            plt.plot(gen_losses[1000::], label="Generator loss")
+            plt.legend()
+            plt.savefig('{}/{}_loss_res_final.png'.format(output_directory, timestr))
+            plt.close()
+        except: log('plotting function got error, continue training...')
 
         #### Training completed.
         log_dict = {"disc_losses": disc_losses,
@@ -1049,7 +1116,7 @@ if __name__ == '__main__':
     n_nodes = 91
     n_edges = n_nodes * n_nodes
     scale = 0.1
-    rw_len = 1
+    rw_len = 2
     batch_size = 8
     train_ratio = 0.8
     t_end = 1.
@@ -1090,56 +1157,37 @@ if __name__ == '__main__':
 
     tggan.session.run(tggan.init_op)
 
-    # # fake_v_inputs, fake_t0_inputs, fake_inputs_discrete, \
-    # # real_data, real_v_inputs, real_t0_inputs, real_lengths, \
-    # disc_real, disc_fake, u \
+    # fake_x_inputs, fake_t0_res_inputs, fake_v_inputs, fake_tau_inputs, fake_lengths, \
+    # real_data, real_x_inputs, real_t0_res_inputs, real_v_inputs, real_tau_inputs, real_lengths, \
+    # disc_real, disc_fake, x_output, t0_wait, t0_input \
     #     = tggan.session.run([
-    #     # tggan.fake_v_inputs, tggan.fake_t0_inputs, tggan.fake_inputs_discrete,
-    #     # tggan.real_data, tggan.real_v_inputs, tggan.real_t0_inputs, tggan.real_lengths,
-    #     tggan.disc_real, tggan.disc_fake, tggan.u
+    #     tggan.fake_x_inputs, tggan.fake_t0_res_inputs, tggan.fake_v_inputs, tggan.fake_tau_inputs, tggan.fake_lengths,
+    #     tggan.real_data, tggan.real_x_inputs, tggan.real_t0_res_inputs, tggan.real_v_inputs, tggan.real_tau_inputs,
+    #     tggan.real_lengths,
+    #     tggan.disc_real, tggan.disc_fake,
+    #     tggan.x_output, tggan.t0_wait, tggan.t0_input,
     # ], feed_dict={tggan.temp: temperature})
     #
     # tggan.session.close()
-
-    # print('fake_v_inputs:\n', np.argmax(fake_v_inputs, axis=-1))
-    # print('u:\n', u)
-    # print('fake_inputs_discrete: \n{}'.format(fake_inputs_discrete))
+    #
+    # print('x_output:\n', x_output)
+    # print('t0_wait:\n', t0_wait)
+    # print('t0_input:\n', t0_input)
     # print('real_data:\n', real_data)
+    # print('real_x_inputs:\n', real_x_inputs)
+    # print('real_t0_res_inputs:\n', real_t0_res_inputs)
     # print('real_v_inputs:\n', np.argmax(real_v_inputs, axis=-1))
-    # print('real_t0_inputs:\n', real_t0_inputs)
+    # print('real_tau_inputs:\n', real_tau_inputs)
     # print('real_lengths:\n', real_lengths)
+    #
+    # print('fake_x_inputs:\n', fake_x_inputs)
+    # print('fake_t0_res_inputs:\n', fake_t0_res_inputs)
+    # print('fake_v_inputs:\n', np.argmax(fake_v_inputs, axis=-1))
+    # print('fake_tau_inputs:\n', fake_tau_inputs)
+    # print('fake_lengths:\n', fake_lengths)
+    #
     # print('disc_real:\n', disc_real)
     # print('disc_fake:\n', disc_fake)
-    # print('fake_lengths:', fake_lengths)
-    # print('real_x_discrete:\n', real_x_discrete)
-    # print('real_v1_discrete:\n', real_v1_discrete)
-    # print('real_u1_discrete:\n', real_u1_discrete)
-    # print('real_t_inputs:\n', real_t_inputs)
-    # print('real_v_discrete:\n', real_v_discrete.shape)
-    # print('real_u_discrete:\n', real_u_discrete.shape)
-    # print('real_tau_inputs:\n', real_tau_inputs)
-
-    # print('x shape:\n', x.shape)
-    # print('v1 shape:\n', v1.shape)
-    # print('u1 shape:\n', u1.shape)
-    # print('x :\n', x)
-    # print('v1 :\n', v1)
-    # print('u1 :\n', u1)
-    # print('mu_last shape:\n', mu_last.shape)
-    # print('sigma_last shape:\n', sigma_last.shape)
-    # print('t shape:\n', t.shape)
-    # print('x_noise shape:\n', x_noise.shape)
-    # print('v1_noise shape:\n', v1_noise.shape)
-    # print('u1_noise shape:\n', u1_noise.shape)
-    # print('initial_states_noise shape:\n', initial_states_noise.shape)
-    # print('lstm states shape:\n', np.array(state[0]).shape, np.array(state[1]).shape, len(state))
-    # print('lstm inputs shape:\n', inputs.shape)
-    # print('output_bef shape:\n', output_bef.shape)
-    # print('leng, x:\n', leng[0], '\nv\n', leng[1], '\nu\n', leng[2], '\nt\n', leng[3],
-    #       '\nlengths\n', leng[4])
-    # print('normal_outputs:\n', normal_outputs)
-    # print('fake_discrete:\n', fake_discrete)
-    # log('-'*40)
 
     max_iters = 10
     eval_every = 5

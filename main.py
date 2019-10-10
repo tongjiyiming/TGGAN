@@ -54,6 +54,7 @@ def main(args):
         continue_training = args.continueTraining
         use_wgan = args.use_wgan
         use_beta = args.use_beta
+        use_decoder = args.use_decoder
 
         # random data from metro
         userid = args.userid
@@ -70,7 +71,8 @@ def main(args):
         tggan = TGGAN(N=n_nodes, rw_len=rw_len,
                       t_end=t_end,
                       walk_generator=walker.walk, batch_size=batch_size, gpu_id=gpu_id,
-                      use_gumbel=True,
+                      noise_type="Uniform",
+                      noise_dim=8,
                       disc_iters=3,
                       W_down_discriminator_size=embedding_size,
                       W_down_generator_size=embedding_size,
@@ -81,8 +83,10 @@ def main(args):
                       discriminator_layers=[40, 10],
                       temp_start=5,
                       learning_rate=lr,
+                      use_gumbel=True,
                       use_wgan=use_wgan,
                       use_beta=use_beta,
+                      use_decoder=use_decoder,
                       )
 
         max_iters = 100000
@@ -105,7 +109,6 @@ def main(args):
                                output_directory=output_directory,
                                )
         log('-'*40)
-    log('end model')
 
     if dataset_name == 'metro':
         log('use metro data')
@@ -126,6 +129,10 @@ def main(args):
         continue_training = args.continueTraining
         use_wgan = args.use_wgan
         use_beta = args.use_beta
+        use_decoder = args.use_decoder
+        print('****** use wgan:', use_wgan)
+        print('****** use decoder:', use_decoder)
+        print('****** use beta:', use_beta)
 
         # random data from metro
         userid = args.userid
@@ -141,7 +148,8 @@ def main(args):
         tggan = TGGAN(N=n_nodes, rw_len=rw_len,
                       t_end=t_end,
                       walk_generator=walker.walk, batch_size=batch_size, gpu_id=gpu_id,
-                      use_gumbel=True,
+                      noise_type="Uniform",
+                      noise_dim=16,
                       disc_iters=3,
                       W_down_discriminator_size=embedding_size,
                       W_down_generator_size=embedding_size,
@@ -152,8 +160,10 @@ def main(args):
                       discriminator_layers=[40, 10],
                       temp_start=5,
                       learning_rate=lr,
+                      use_gumbel=True,
                       use_wgan=use_wgan,
                       use_beta=use_beta,
+                      use_decoder=use_decoder,
                       )
 
         max_iters = 100000
@@ -217,8 +227,10 @@ if __name__ == '__main__':
                         help="if this run should run all evaluations")
     parser.add_argument("-uw", "--use_wgan", default=False, type=bool,
                         help="if use WGAN loss function")
+    parser.add_argument("-ud", "--use_decoder", default=False, type=bool,
+                        help="if decoder function")
     parser.add_argument("-ub", "--use_beta", default=False, type=bool,
-                        help="if use WGAN loss function")
+                        help="if beta for decoder function")
     parser.add_argument("-ct", "--continueTraining", default=False, type=bool,
                         help="if this run is restored from a corrupted run")
 
