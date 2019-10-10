@@ -78,7 +78,7 @@ class TGGAN:
                  noise_type="Gaussian", learning_rate=0.0003, disc_iters=3, wasserstein_penalty=10,
                  l2_penalty_generator=1e-7, l2_penalty_discriminator=5e-5, temp_start=5.0, min_temperature=0.5,
                  temperature_decay=1 - 5e-5, seed=15, gpu_id=0, use_gumbel=True, legacy_generator=False,
-                 use_wgan=False, use_beta=False, use_decoder=False,
+                 use_wgan=True, use_beta=False, use_decoder=False,
                  ):
         """
         Initialize NetGAN.
@@ -247,47 +247,31 @@ class TGGAN:
 
         if use_wgan:
             with tf.name_scope('wgan_loss'):
-                # WGAN lipschitz-penalty
-                # alpha_v = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
-                #
-                # self.differences_v = self.fake_v_inputs - self.real_v_inputs
-                # self.interpolates_v = self.real_v_inputs + (alpha_v * self.differences_v)
-                # self.gradients_v = tf.gradients(
-                #     self.discriminator_function(self.interpolates_v, self.fake_lengths, reuse=True),
-                #     [self.interpolates_v])[0]
-                # self.slopes = tf.sqrt(
-                #     tf.reduce_sum(tf.stack([
-                #         tf.reduce_sum(tf.square(self.gradients_v), reduction_indices=[1, 2]),
-                #     ]), reduction_indices=[1])
-                # )
+                alpha_x = tf.random_uniform(shape=[self.params['batch_size'], 1], minval=0.,maxval=1.)
+                self.differences_x = self.fake_x_inputs - self.real_x_inputs
+                self.interpolates_x = self.real_x_inputs + (alpha_x * self.differences_x)
 
-                # alpha_v = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
-                # alpha_t0 = tf.random_uniform(shape=[self.params['batch_size'], 1], minval=0.,maxval=1.)
-                # self.differences_v = self.fake_v_inputs - self.real_v_inputs
-                # self.interpolates_v = self.real_v_inputs + (alpha_v * self.differences_v)
-                # self.differences_t0 = self.fake_t0_inputs - self.real_t0_inputs
-                # self.interpolates_t0 = self.real_t0_inputs + (alpha_t0 * self.differences_t0)
-                # self.gradients_v, self.gradients_t0 = tf.gradients(
-                #     self.discriminator_function(self.interpolates_v, self.interpolates_t0, self.fake_lengths, reuse=True),
-                #     [self.interpolates_v, self.interpolates_t0])
-                # self.slopes = tf.sqrt(
-                #     tf.reduce_sum(tf.stack([
-                #         tf.reduce_sum(tf.square(self.gradients_v), reduction_indices=[1, 2]),
-                #         tf.reduce_sum(tf.square(self.gradients_t0), reduction_indices=[1]),
-                #     ]), reduction_indices=[1])
-                # )
+                alpha_t0 = tf.random_uniform(shape=[self.params['batch_size'], 1], minval=0.,maxval=1.)
+                self.differences_t0 = self.fake_t0_res_inputs - self.real_t0_res_inputs
+                self.interpolates_t0 = self.real_t0_res_inputs + (alpha_t0 * self.differences_t0)
 
                 alpha_v = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
-                alpha_tau = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
                 self.differences_v = self.fake_v_inputs - self.real_v_inputs
                 self.interpolates_v = self.real_v_inputs + (alpha_v * self.differences_v)
+
+                alpha_tau = tf.random_uniform(shape=[self.params['batch_size'], 1, 1], minval=0.,maxval=1.)
                 self.differences_tau = self.fake_tau_inputs - self.real_tau_inputs
                 self.interpolates_tau = self.real_tau_inputs + (alpha_tau * self.differences_tau)
-                self.gradients_v, self.gradients_tau = tf.gradients(
-                    self.discriminator_function(self.interpolates_v, self.interpolates_tau, self.fake_lengths, reuse=True),
-                    [self.interpolates_v, self.interpolates_tau])
+
+                self.gradients_x, self.gradients_t0, self.gradients_v, self.gradients_tau = tf.gradients(
+                    self.discriminator_function(
+                        self.interpolates_x, self.interpolates_t0, self.interpolates_v, self.interpolates_tau,
+                        self.fake_lengths, reuse=True),
+                    [self.interpolates_x, self.interpolates_t0, self.interpolates_v, self.interpolates_tau])
                 self.slopes = tf.sqrt(
                     tf.reduce_sum(tf.stack([
+                        # tf.reduce_sum(tf.square(self.gradients_x), reduction_indices=[1]),
+                        # tf.reduce_sum(tf.square(self.gradients_t0), reduction_indices=[1]),
                         tf.reduce_sum(tf.square(self.gradients_v), reduction_indices=[1, 2]),
                         tf.reduce_sum(tf.square(self.gradients_tau), reduction_indices=[1, 2]),
                     ]), reduction_indices=[1])
@@ -336,7 +320,7 @@ class TGGAN:
         self.session = tf.InteractiveSession(config=config)
         self.init_op = tf.global_variables_initializer()
 
-    def discriminator_recurrent(self, x, t0_res, edges, ts, lengths, reuse=None):
+    def discriminator_recurrent(self, x, t0_res, edges, taus, lengths, reuse=None):
         """
         Discriminate real from fake random walks using LSTM.
         Parameters
@@ -379,7 +363,7 @@ class TGGAN:
             v_input_reshape = tf.matmul(v_input_reshape, self.W_down_discriminator)
             v_input_reshape = tf.reshape(v_input_reshape, [-1, self.rw_len, int(self.W_down_discriminator.get_shape()[-1])])
 
-            t_inputs = tf.reshape(ts, [-1, 1])
+            t_inputs = tf.reshape(taus, [-1, 1])
             for ix, size in enumerate(self.D_layers):
                 t_inputs = tf.layers.dense(t_inputs, size, name="Discriminator.t_{}".format(ix), reuse=reuse,
                                            activation=tf.nn.tanh,
