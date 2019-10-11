@@ -89,9 +89,9 @@ def main(args):
                       use_decoder=use_decoder,
                       )
 
-        max_iters = 100000
-        eval_every = 5000
-        plot_every = 5000
+        max_iters = 10000
+        eval_every = 1000
+        plot_every = 1000
         n_eval_loop = 1
         transitions_per_iter = batch_size * n_eval_loop
         eval_transitions = transitions_per_iter * 100
@@ -119,10 +119,10 @@ def main(args):
         n_nodes = 91
         scale = 0.1
         rw_len = args.rw_len
-        batch_size = 32
+        batch_size = args.batch_size
         train_ratio = 0.9
         t_end = 1.
-        embedding_size = 64
+        embedding_size = args.embedding_size
         gpu_id = 0
 
         lr = args.learningrate
@@ -133,6 +133,9 @@ def main(args):
         print('****** use wgan:', use_wgan)
         print('****** use decoder:', use_decoder)
         print('****** use beta:', use_beta)
+
+        time_deconv = args.time_deconv
+        time_sample_num = args.time_sample_num
 
         # random data from metro
         userid = args.userid
@@ -148,16 +151,18 @@ def main(args):
         tggan = TGGAN(N=n_nodes, rw_len=rw_len,
                       t_end=t_end,
                       walk_generator=walker.walk, batch_size=batch_size, gpu_id=gpu_id,
-                      noise_type="Uniform",
+                      noise_type="Gaussian",
                       noise_dim=16,
                       disc_iters=3,
                       W_down_discriminator_size=embedding_size,
                       W_down_generator_size=embedding_size,
+                      generator_time_deconv_output_depth=time_deconv,
+                      generator_time_sample_num=time_sample_num,
                       l2_penalty_generator=1e-7,
                       l2_penalty_discriminator=5e-5,
                       generator_start_layers=[20, 10],
-                      generator_layers=[50, 10],
-                      discriminator_layers=[40, 10],
+                      generator_layers=[100, 30],
+                      discriminator_layers=[80, 30],
                       temp_start=5,
                       learning_rate=lr,
                       use_gumbel=True,
@@ -167,8 +172,8 @@ def main(args):
                       )
 
         max_iters = 100000
-        eval_every = 5000
-        plot_every = 5000
+        eval_every = 1000
+        plot_every = 1000
         n_eval_loop = 1
         transitions_per_iter = batch_size * n_eval_loop
         eval_transitions = transitions_per_iter * 1000
@@ -231,6 +236,12 @@ if __name__ == '__main__':
                         help="if decoder function")
     parser.add_argument("-ub", "--use_beta", default=False, type=bool,
                         help="if beta for decoder function")
+    parser.add_argument("-es", "--embedding_size", default=32, type=int,
+                        help="embedding size of nodes, W_down")
+    parser.add_argument("-td", "--time_deconv", default=32, type=int,
+                        help="deconv output channels number")
+    parser.add_argument("-ts", "--time_sample_num", default=8, type=int,
+                        help="time sampling number")
     parser.add_argument("-ct", "--continueTraining", default=False, type=bool,
                         help="if this run is restored from a corrupted run")
 
