@@ -149,14 +149,14 @@ def main(args):
                                 )
 
         tggan = TGGAN(N=n_nodes, rw_len=rw_len,
-                      # t_end=t_end,
+                      t_end=t_end,
                       walk_generator=walker.walk, batch_size=batch_size, gpu_id=gpu_id,
                       noise_type="Uniform",
                       disc_iters=3,
                       W_down_discriminator_size=embedding_size,
                       W_down_generator_size=embedding_size,
-                      # generator_time_deconv_output_depth=time_deconv,
-                      # generator_time_sample_num=time_sample_num,
+                      generator_time_deconv_output_depth=time_deconv,
+                      generator_time_sample_num=time_sample_num,
                       l2_penalty_generator=1e-7,
                       l2_penalty_discriminator=5e-5,
                       # generator_start_layers=[20, 10],
@@ -165,9 +165,9 @@ def main(args):
                       temp_start=5,
                       learning_rate=lr,
                       use_gumbel=True,
-                      # use_wgan=use_wgan,
-                      # use_beta=use_beta,
-                      # use_decoder=use_decoder,
+                      use_wgan=use_wgan,
+                      use_beta=use_beta,
+                      use_decoder=use_decoder,
                       )
 
         max_iters = 10000
