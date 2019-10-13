@@ -223,8 +223,8 @@ class TGGAN:
         self.fake_x_inputs, self.fake_t0_res_inputs, \
         self.fake_node_inputs, self.fake_tau_inputs = self.generator_function(self.batch_size, reuse=False,
                                                                               gumbel=use_gumbel, legacy=legacy_generator)
-        self.fake_inputs_discrete = self.generate_discrete(self.params['batch_size'], reuse=True,
-                                                           gumbel=use_gumbel, legacy=legacy_generator)
+        # self.fake_inputs_discrete = self.generate_discrete(self.params['batch_size'], reuse=True,
+        #                                                    gumbel=use_gumbel, legacy=legacy_generator)
 
         # Pre-fetch real random walks
         dataset = tf.data.Dataset.from_generator(generator=walk_generator,
@@ -536,11 +536,15 @@ class TGGAN:
                                 choice = tf.random_uniform([self.G_t_sample_n], maxval=t0_wait.shape[1], dtype=tf.int64)
                                 t0_wait = tf.gather(t0_wait, choice, axis=1)
                                 t0_wait = tf.reduce_mean(t0_wait, axis=1)
-                                t0_wait = tf.layers.dense(t0_wait, 1, name="Generator.t0_deconv_last", reuse=reuse, activation=None)
+                                t0_wait = tf.layers.dense(t0_wait, 1, name="Generator.t0_deconv_last",
+                                                          reuse=reuse, activation=None)
 
-                    # t0_output = tf.nn.relu(self.t_end - t0_wait, name='Generator.t0_res')
+                    self.t0_wait = t0_wait
+                    t0_wait = self.time_constraint(t0_wait, self.t_end, name="START")
                     condition = tf.math.equal(tf.argmax(x_output, axis=-1), 1)
-                    t0_res_output = tf.where(condition, tf.ones_like(t0_wait), t0_wait)
+                    t0_wait = tf.where(condition, tf.zeros_like(t0_wait), t0_wait)
+
+                    t0_res_output = self.t_end - t0_wait
                     t0_input = t0_res_output
 
             with tf.name_scope('INITIAL_STATES'):
@@ -580,10 +584,6 @@ class TGGAN:
                 def lstm_cell(lstm_size, name):
                     return tf.contrib.rnn.BasicLSTMCell(lstm_size, reuse=tf.get_variable_scope().reuse,
                                                         name="LSTM_{}".format(name))
-
-                # self.stacked_lstm_node_v = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, "node_v") for size in self.G_layers])
-                # self.stacked_lstm_node_u = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, 'node_u') for size in self.G_layers])
-                # self.stacked_lstm_tau = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, "tau") for size in self.G_layers])
                 self.stacked_lstm = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, "shared") for size in self.G_layers])
 
                 # LSTM tine steps
@@ -638,8 +638,6 @@ class TGGAN:
                     with tf.variable_scope('GEN_TAU_TIME'):
                         if i > 0: tf.get_variable_scope().reuse_variables()
 
-                        # output, state = self.stacked_lstm.call(inputs, state)
-
                         if self.params['use_decoder']:
                             loc = output
                             scale = output
@@ -688,81 +686,30 @@ class TGGAN:
                         inputs = tf.layers.dense(tau, int(self.W_down_generator.shape[-1]),
                                                  name="Generator.tau_input", activation=tf.nn.tanh)
 
-                #     for j in range(3):
-                #         # Get LSTM output
-                #         with tf.variable_scope('LSTM_CELL') as lstm_cell_scope:
-                #             if i*3 + j > 0: lstm_cell_scope.reuse_variables()
-                #             output, state = self.stacked_lstm.call(inputs, state)
-                #
-                #         if j < 2:
-                #             with tf.name_scope('GEN_NODE'):
-                #                 # Blow up to dimension N using W_up
-                #                 node_logit = tf.matmul(output, self.W_up) + self.b_W_up
-                #
-                #                 # Perform Gumbel softmax to ensure gradients flow
-                #                 if gumbel: node_output = gumbel_softmax(node_logit, temperature=self.temp, hard=True)
-                #                 else:      node_output = tf.nn.softmax(node_logit)
-                #
-                #                 node_outputs.append(node_output)
-                #
-                #                 # Back to dimension d
-                #                 inputs = tf.matmul(node_output, self.W_down_generator)
-                #
-                #         # generate \tau
-                #         if j == 2:
-                #             with tf.variable_scope('TAU_TIME') as tau_scope:
-                #                 if i > 1: tau_scope.reuse_variables()
-                #                 if self.params['use_decoder']:
-                #                     loc = output
-                #                     scale = output
-                #                     for ix, size in enumerate(self.G_tau_up_layers):
-                #                         loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
-                #                                               activation=tf.nn.tanh,
-                #                                               kernel_initializer=tf.contrib.layers.xavier_initializer())
-                #                         scale = tf.layers.dense(scale, size, name="Generator.scale_tau_{}".format(ix),
-                #                                                 activation=tf.nn.tanh,
-                #                                                 kernel_initializer=tf.contrib.layers.xavier_initializer())
-                #                     loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", activation=None)
-                #                     scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", activation=None)
-                #
-                #                     if not self.params['use_beta']:
-                #                         tau = [tf.truncated_normal(
-                #                             [1], mean=loc[i, 0], stddev=scale[i, 0]) for i in range(n_samples)]
-                #                         tau = tf.stack(tau, axis=0)
-                #                     else:
-                #                         tau = self.beta_decoder(_alpha_param=loc, _beta_param=scale)
-                #                 else:
-                #                     tau = output
-                #                     for ix, size in enumerate(self.G_tau_up_layers):
-                #                         tau = tf.layers.dense(tau, size, name="Generator.tau_up_{}".format(ix),
-                #                                               activation=tf.nn.tanh,
-                #                                               kernel_initializer=tf.contrib.layers.xavier_initializer())
-                #                     tau = tf.expand_dims(tau, axis=2)
-                #
-                #                     # deconvolutional
-                #                     n_strides = 2
-                #                     tau = tf.nn.conv1d_transpose(tau, filters=self.tau_deconv_filter,
-                #                                                  output_shape=[n_samples,
-                #                                                                self.G_tau_up_layers[-1] * n_strides,
-                #                                                                self.G_t_deconv_output_depth],
-                #                                                  strides=n_strides, padding='SAME',
-                #                                                  name='Generator.tau_deconv')
-                #                     choice = tf.random_uniform([self.G_t_sample_n], maxval=int(tau.shape[1]),
-                #                                                dtype=tf.int64)
-                #                     tau = tf.gather(tau, choice, axis=1)
-                #                     tau = tf.reduce_mean(tau, axis=1)
-                #                     tau = tf.layers.dense(tau, 1, name="Generator.tau_deconv_last",
-                #                                           activation=None)
-                #                 # save outputs
-                #                 tau_outputs.append(tau)
-                #
-                #                 # convert to input
-                #                 inputs = tf.layers.dense(tau, int(self.W_down_generator.shape[-1]),
-                #                                          name="Generator.tau_input", activation=tf.nn.tanh)
-
                 node_outputs = tf.stack(node_outputs, axis=1)
                 tau_outputs = tf.stack(tau_outputs, axis=1)
         return x_output, t0_res_output, node_outputs, tau_outputs
+
+    def time_constraint(self, t, t_max, name, use_method='l2_norm', bound=1e-2, epsilon=1e-12):
+        with tf.name_scope("{}_TIME_CONSTRAINT".format(name)):
+            if use_method == 'l2_norm':
+                t = (tf.nn.l2_normalize(t, axis=0) + 1) / 2 * (t_max - bound) + epsilon
+            elif use_method == 'batch_norm':
+                t = (tf.layers.batch_normalization(t, axis=0) + 1) / 2 * t_max
+            elif use_method == 'min_max':
+                min_ = tf.math.reduce_min(t, axis=0)
+                max_ = tf.math.reduce_max(t, axis=0)
+                min_ = tf.stop_gradient(min_)
+                max_ = tf.stop_gradient(max_)
+                t = (t - min_) / (max_ - min_) * (t_max - bound) + epsilon # min-max normalize
+            elif use_method == 'relu':
+                t = tf.nn.relu(t) + epsilon
+                t = tf.nn.relu(t_max - bound - t)
+            else:
+                raise Exception('wrong time constraint methods name. choose: l2_norm, batch_norm, min_max, relu.' + \
+                                'recommend l2_norm or plain relu')
+
+            return t
 
     def beta_decoder(self, _alpha_param, _beta_param, B = 5):
         # B is for shape augmentation
@@ -1231,52 +1178,50 @@ if __name__ == '__main__':
 
     tggan.session.run(tggan.init_op)
 
-    # fake_x_inputs, fake_t0_res_inputs, fake_v_inputs, fake_u_inputs, fake_tau_inputs, fake_lengths, \
-    # real_data, real_x_inputs, real_t0_res_inputs, real_v_inputs, real_u_inputs, real_tau_inputs, real_lengths, \
-    # disc_real, disc_fake \
-    #     = tggan.session.run([
-    #     tggan.fake_x_inputs, tggan.fake_t0_res_inputs,
-    #     tggan.fake_v_inputs, tggan.fake_u_inputs, tggan.fake_tau_inputs, tggan.fake_lengths,
-    #     tggan.real_data, tggan.real_x_inputs, tggan.real_t0_res_inputs,
-    #     tggan.real_v_inputs, tggan.real_u_inputs, tggan.real_tau_inputs,
-    #     tggan.real_lengths,
-    #     tggan.disc_real, tggan.disc_fake
-    # ], feed_dict={tggan.temp: temperature})
-    #
-    # tggan.session.close()
-    #
-    # print('real_data:\n', real_data)
-    # print('real_x_inputs:\n', real_x_inputs)
-    # print('real_t0_res_inputs:\n', real_t0_res_inputs)
-    # print('real_v_inputs:\n', np.argmax(real_v_inputs, axis=-1))
-    # print('real_u_inputs:\n', np.argmax(real_u_inputs, axis=-1))
-    # print('real_tau_inputs:\n', real_tau_inputs)
-    # print('real_lengths:\n', real_lengths)
-    #
-    # print('fake_x_inputs:\n', fake_x_inputs)
-    # print('fake_t0_res_inputs:\n', fake_t0_res_inputs)
-    # print('fake_v_inputs:\n', np.argmax(fake_v_inputs, axis=-1))
-    # print('fake_u_inputs:\n', np.argmax(fake_u_inputs, axis=-1))
-    # print('fake_tau_inputs:\n', fake_tau_inputs)
+    fake_x_inputs, fake_t0_res_inputs, t0_wait, fake_node_inputs, fake_tau_inputs, \
+    real_data, real_x_inputs, real_t0_res_inputs, real_node_inputs, real_tau_inputs, real_lengths, \
+    disc_real, disc_fake \
+        = tggan.session.run([
+        tggan.fake_x_inputs, tggan.fake_t0_res_inputs, tggan.t0_wait,
+        tggan.fake_node_inputs, tggan.fake_tau_inputs,
+        tggan.real_data, tggan.real_x_inputs, tggan.real_t0_res_inputs,
+        tggan.real_node_inputs, tggan.real_tau_inputs, tggan.real_lengths,
+        tggan.disc_real, tggan.disc_fake
+    ], feed_dict={tggan.temp: temperature})
+
+    tggan.session.close()
+
+    print('real_data:\n', real_data)
+    print('real_x_inputs:\n', real_x_inputs)
+    print('real_t0_res_inputs:\n', real_t0_res_inputs)
+    print('fake_node_inputs:\n', np.argmax(fake_node_inputs, axis=-1))
+    print('real_tau_inputs:\n', real_tau_inputs)
+    print('real_lengths:\n', real_lengths)
+
+    print('fake_x_inputs:\n', fake_x_inputs)
+    print('t0_wait:\n', t0_wait)
+    print('fake_t0_res_inputs:\n', fake_t0_res_inputs)
+    print('real_node_inputs:\n', np.argmax(real_node_inputs, axis=-1))
+    print('fake_tau_inputs:\n', fake_tau_inputs)
     # print('fake_lengths:\n', fake_lengths)
 
     # print('disc_real:\n', disc_real)
     # print('disc_fake:\n', disc_fake)
 
-    max_iters = 10
-    eval_every = 5
-    plot_every = 5
-    n_eval_loop = 1
-    transitions_per_iter = batch_size * n_eval_loop
-    eval_transitions = transitions_per_iter * 100
-    model_name='metro'
-
-    log_dict = tggan.train(
-        # n_eval_loop=n_eval_loop,
-       stopping=None,
-        eval_transitions=eval_transitions,
-        eval_every=eval_every, plot_every=plot_every,
-        max_patience=20, max_iters=max_iters,
-        model_name=model_name,
-        )
+    # max_iters = 10
+    # eval_every = 5
+    # plot_every = 5
+    # n_eval_loop = 1
+    # transitions_per_iter = batch_size * n_eval_loop
+    # eval_transitions = transitions_per_iter * 100
+    # model_name='metro'
+    #
+    # log_dict = tggan.train(
+    #     # n_eval_loop=n_eval_loop,
+    #    stopping=None,
+    #     eval_transitions=eval_transitions,
+    #     eval_every=eval_every, plot_every=plot_every,
+    #     max_patience=20, max_iters=max_iters,
+    #     model_name=model_name,
+    #     )
     log('-'*40)

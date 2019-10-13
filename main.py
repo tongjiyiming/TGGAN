@@ -69,7 +69,7 @@ def main(args):
                                 )
 
         tggan = TGGAN(N=n_nodes, rw_len=rw_len,
-                      # t_end=t_end,
+                      t_end=t_end,
                       walk_generator=walker.walk, batch_size=batch_size, gpu_id=gpu_id,
                       noise_type="Uniform",
                       disc_iters=3,
@@ -83,9 +83,9 @@ def main(args):
                       temp_start=5,
                       learning_rate=lr,
                       use_gumbel=True,
-                      # use_wgan=use_wgan,
-                      # use_beta=use_beta,
-                      # use_decoder=use_decoder,
+                      use_wgan=use_wgan,
+                      use_beta=use_beta,
+                      use_decoder=use_decoder,
                       )
 
         max_iters = 10000
@@ -170,7 +170,7 @@ def main(args):
                       use_decoder=use_decoder,
                       )
 
-        max_iters = 100000
+        max_iters = 10000
         eval_every = 1000
         plot_every = 1000
         n_eval_loop = 1
