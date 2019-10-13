@@ -10,7 +10,7 @@ Technical University of Munich
 """
 
 import os
-
+import shutil
 import logging
 import datetime
 
@@ -64,13 +64,13 @@ class TGGAN:
     """
 
     def __init__(self, N, rw_len, walk_generator, t_end,
-                 generator_x_up_layers=[30],
-                 generator_t0_up_layers=[60],
-                 generator_tau_up_layers=[60],
+                 generator_x_up_layers=[32],
+                 generator_t0_up_layers=[128],
+                 generator_tau_up_layers=[64],
                  generator_time_deconv_output_depth=8,
                  generator_time_sample_num=2,
-                 generator_layers=[40],
-                 discriminator_layers=[30],
+                 generator_layers=[40, 10],
+                 discriminator_layers=[30, 13],
                  W_down_generator_size=128, W_down_discriminator_size=128, batch_size=128, noise_dim=16,
                  noise_type="Gaussian", learning_rate=0.0003, disc_iters=3, wasserstein_penalty=10,
                  l2_penalty_generator=1e-7, l2_penalty_discriminator=5e-5, temp_start=5.0, min_temperature=0.5,
@@ -223,8 +223,8 @@ class TGGAN:
         self.fake_x_inputs, self.fake_t0_res_inputs, \
         self.fake_node_inputs, self.fake_tau_inputs = self.generator_function(self.batch_size, reuse=False,
                                                                               gumbel=use_gumbel, legacy=legacy_generator)
-        self.fake_inputs_discrete = self.generate_discrete(self.params['batch_size'], reuse=True,
-                                                           gumbel=use_gumbel, legacy=legacy_generator)
+        # self.fake_inputs_discrete = self.generate_discrete(self.params['batch_size'], reuse=True,
+        #                                                    gumbel=use_gumbel, legacy=legacy_generator)
 
         # Pre-fetch real random walks
         dataset = tf.data.Dataset.from_generator(generator=walk_generator,
@@ -468,81 +468,6 @@ class TGGAN:
                 else:
                     initial_states_noise = z
 
-            with tf.name_scope('START'):
-                # generate start x, and its residual time
-                x_output = None
-                if x:
-                    x_output = x
-                else:
-                    # generate start node binary if not need
-                    x_logit = initial_states_noise
-                    for ix, size in enumerate(self.G_x_up_layers):
-                        x_logit = tf.layers.dense(x_logit, size, name="Generator.x_logit_{}".format(ix),
-                                                  reuse=reuse, activation=tf.nn.tanh)
-                    x_logit = tf.layers.dense(x_logit, 2, name="Generator.x_logit_last",
-                                              reuse=reuse, activation=None)
-
-                    # Perform Gumbel softmax to ensure gradients flow for e, and end node y
-                    if gumbel:
-                        x_output = gumbel_softmax(x_logit, temperature=self.temp, hard=True)
-                    else:
-                        x_output = tf.nn.softmax(x_logit)
-
-                    # Back to dimension 2 of x
-                    x_down = tf.matmul(x_output, self.W_down_x_generator)
-
-                t0_res_output = None
-                if t0:
-                    t0_res_output = t0
-                else:
-                    with tf.name_scope('t0_gen'):
-                        if self.params['use_decoder']:
-                            with tf.name_scope('t0_repara_decoder'):
-                                loc_t0 = tf.concat([x_down, initial_states_noise], axis=1)
-                                scale_t0 = tf.concat([x_down, initial_states_noise], axis=1)
-                                # loc_t0 = x_down
-                                # scale_t0 = x_down
-                                for ix, size in enumerate(self.G_t0_up_layers):
-                                    loc_t0 = tf.layers.dense(loc_t0, size, name="Generator.loc_t0_{}".format(ix),
-                                                             reuse=reuse, activation=tf.nn.tanh)
-                                    scale_t0 = tf.layers.dense(scale_t0, size,
-                                                               name="Generator.scale_t0_{}".format(ix),
-                                                               reuse=reuse, activation=tf.nn.tanh)
-                                loc_t0 = tf.layers.dense(loc_t0, 1, name="Generator.loc_t0_last", reuse=reuse,
-                                                         activation=None)
-                                scale_t0 = tf.layers.dense(scale_t0, 1, name="Generator.scale_t0_last", reuse=reuse,
-                                                           activation=None)
-
-                                t0_wait = [tf.truncated_normal([1], mean=loc_t0[i, 0], stddev=scale_t0[i, 0])
-                                           for i in range(n_samples)]
-                                t0_wait = tf.stack(t0_wait, axis=0)
-                        else:
-                            with tf.name_scope('t0_deep_decoder'):
-                                t0_wait = tf.concat([x_down, initial_states_noise], axis=1)
-                                for ix, size in enumerate(self.G_t0_up_layers):
-                                    t0_wait = tf.layers.dense(t0_wait, size, name="Generator.t0_up_{}".format(ix),
-                                                             reuse=reuse, activation=tf.nn.tanh)
-                                t0_wait = tf.expand_dims(t0_wait, axis=2)
-
-                                # deconvolutional
-                                n_strides = 2
-                                t0_wait = tf.nn.conv1d_transpose(
-                                    t0_wait, filters=self.t0_deconv_filter,
-                                    output_shape=[n_samples, int(t0_wait.shape[1])*n_strides,
-                                                  self.G_t_deconv_output_depth],
-                                    strides=n_strides, padding='SAME',
-                                    name='Generator.t0_deconv')
-
-                                choice = tf.random_uniform([self.G_t_sample_n], maxval=t0_wait.shape[1], dtype=tf.int64)
-                                t0_wait = tf.gather(t0_wait, choice, axis=1)
-                                t0_wait = tf.reduce_mean(t0_wait, axis=1)
-                                t0_wait = tf.layers.dense(t0_wait, 1, name="Generator.t0_deconv_last", reuse=reuse, activation=None)
-
-                    # t0_output = tf.nn.relu(self.t_end - t0_wait, name='Generator.t0_res')
-                    condition = tf.math.equal(tf.argmax(x_output, axis=-1), 1)
-                    t0_res_output = tf.where(condition, tf.ones_like(t0_wait), t0_wait)
-                    t0_input = t0_res_output
-
             with tf.name_scope('INITIAL_STATES'):
                 initial_states = []
                 # Noise preprocessing
@@ -573,114 +498,97 @@ class TGGAN:
                 inputs = tf.zeros([n_samples, self.params['W_Down_Generator_size']])
 
             # LSTM steps
-            with tf.name_scope('LSTM'):
-                node_outputs = []
-                tau_outputs = []
+            node_outputs = []
+            tau_outputs = []
 
-                def lstm_cell(lstm_size, name):
-                    return tf.contrib.rnn.BasicLSTMCell(lstm_size, reuse=tf.get_variable_scope().reuse,
-                                                        name="LSTM_{}".format(name))
+            def lstm_cell(lstm_size, name):
+                return tf.contrib.rnn.BasicLSTMCell(lstm_size, reuse=tf.get_variable_scope().reuse,
+                                                    name="LSTM_{}".format(name))
 
-                # self.stacked_lstm_node_v = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, "node_v") for size in self.G_layers])
-                # self.stacked_lstm_node_u = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, 'node_u') for size in self.G_layers])
-                # self.stacked_lstm_tau = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, "tau") for size in self.G_layers])
-                self.stacked_lstm = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, "shared") for size in self.G_layers])
 
-                # LSTM tine steps
-                for i in range(self.rw_len):
+            self.stacked_lstm = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, "walks") for size in self.G_layers])
+            # self.stacked_lstm_x = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, "start") for size in self.G_layers])
 
-                    with tf.variable_scope("LSTM_NODE_V"):
-                        if i > 0: tf.get_variable_scope().reuse_variables()
+            # LSTM tine steps
+            for i in range(self.rw_len + 1):
+                if i == 0:
+                    with tf.variable_scope('LSTM_CELL'):
                         output, state = self.stacked_lstm.call(inputs, state)
 
-                    with tf.variable_scope('GEN_NODE_V'):
-                        if i > 0: tf.get_variable_scope().reuse_variables()
-
-                        # Blow up to dimension N using W_up
-                        v_logit = tf.matmul(output, self.W_up) + self.b_W_up
-
-                        # Perform Gumbel softmax to ensure gradients flow
-                        if gumbel:
-                            v_output = gumbel_softmax(v_logit, temperature=self.temp, hard=True)
+                    with tf.name_scope('GEN_START_X'):
+                        # generate start x, and its residual time
+                        if x:
+                            x_output = x
+                            x_down = tf.matmul(x_output, self.W_down_x_generator)
                         else:
-                            v_output = tf.nn.softmax(v_logit)
+                            # generate start node binary if not need
+                            x_logit = output
+                            for ix, size in enumerate(self.G_x_up_layers):
+                                x_logit = tf.layers.dense(x_logit, size, name="Generator.x_logit_{}".format(ix),
+                                                          reuse=reuse, activation=tf.nn.tanh)
+                            x_logit = tf.layers.dense(x_logit, 2, name="Generator.x_logit_last",
+                                                      reuse=reuse, activation=None)
 
-                        node_outputs.append(v_output)
+                            # Perform Gumbel softmax to ensure gradients flow for e, and end node y
+                            if gumbel:
+                                x_output = gumbel_softmax(x_logit, temperature=self.temp, hard=True)
+                            else:
+                                x_output = tf.nn.softmax(x_logit)
 
-                        # Back to dimension d
-                        inputs = tf.matmul(v_output, self.W_down_generator)
+                            x_down = tf.matmul(x_output, self.W_down_x_generator)
 
-                    with tf.variable_scope("LSTM_NODE_U"):
-                        if i > -1: tf.get_variable_scope().reuse_variables()
-                        output, state = self.stacked_lstm.call(inputs, state)
+                            # convert to input
+                            inputs = tf.layers.dense(x_down, self.params['W_Down_Discriminator_size'],
+                                                     name="Generator.x_lstm_input",
+                                                     reuse=reuse, activation=tf.nn.tanh)
 
-                    with tf.variable_scope('GEN_NODE_U'):
-                        if i > 0: tf.get_variable_scope().reuse_variables()
+                    output, state = self.stacked_lstm.call(inputs, state)
 
-                        # Blow up to dimension N using W_up
-                        u_logit = tf.matmul(output, self.W_up) + self.b_W_up
-
-                        # Perform Gumbel softmax to ensure gradients flow
-                        if gumbel:
-                            u_output = gumbel_softmax(u_logit, temperature=self.temp, hard=True)
+                    with tf.name_scope('GEN_START_TIME'):
+                        if t0:
+                            t0_res_output = t0
                         else:
-                            u_output = tf.nn.softmax(u_logit)
+                            t0_wait = self.generate_time_t0(output)
+                            # t0_wait = tf.nn.relu(t0_wait - 0.1) - tf.nn.relu(t0_wait - self.t_end)
 
-                        node_outputs.append(u_output)
+                            # t0_output = tf.nn.relu(self.t_end - t0_wait, name='Generator.t0_res')
+                            condition = tf.math.equal(tf.argmax(x_output, axis=-1), 1)
+                            t0_res_output = tf.where(condition, tf.ones_like(t0_wait), t0_wait)
 
-                        # Back to dimension d
-                        inputs = tf.matmul(u_output, self.W_down_generator)
-
-                    with tf.variable_scope("LSTM_TAU_TIME"):
-                        if i > -1: tf.get_variable_scope().reuse_variables()
+                            # convert to input
+                            inputs = tf.layers.dense(t0_res_output, self.params['W_Down_Discriminator_size'],
+                                                     name="Generator.t0_lstm_input",
+                                                     reuse=reuse, activation=tf.nn.tanh)
+                else:
+                    for j in range(2):
+                        # LSTM for first node
                         output, state = self.stacked_lstm.call(inputs, state)
+
+                        with tf.variable_scope('GEN_NODE'):
+                            if i > 1: tf.get_variable_scope().reuse_variables()
+
+                            # Blow up to dimension N using W_up
+                            logit = tf.matmul(output, self.W_up) + self.b_W_up
+
+                            # Perform Gumbel softmax to ensure gradients flow
+                            if gumbel:
+                                output = gumbel_softmax(logit, temperature=self.temp, hard=True)
+                            else:
+                                output = tf.nn.softmax(logit)
+
+                            node_outputs.append(output)
+
+                            # Back to dimension d
+                            inputs = tf.matmul(output, self.W_down_generator)
+
+                    # LSTM for tau
+                    output, state = self.stacked_lstm.call(inputs, state)
 
                     with tf.variable_scope('GEN_TAU_TIME'):
-                        if i > 0: tf.get_variable_scope().reuse_variables()
+                        if i > 1: tf.get_variable_scope().reuse_variables()
 
-                        # output, state = self.stacked_lstm.call(inputs, state)
+                        tau = self.generate_time_tau(output)
 
-                        if self.params['use_decoder']:
-                            loc = output
-                            scale = output
-                            for ix, size in enumerate(self.G_tau_up_layers):
-                                loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
-                                                      activation=tf.nn.tanh,
-                                                      kernel_initializer=tf.contrib.layers.xavier_initializer())
-                                scale = tf.layers.dense(scale, size, name="Generator.scale_tau_{}".format(ix),
-                                                        activation=tf.nn.tanh,
-                                                        kernel_initializer=tf.contrib.layers.xavier_initializer())
-                            loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", activation=None)
-                            scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", activation=None)
-
-                            if not self.params['use_beta']:
-                                tau = [tf.truncated_normal(
-                                    [1], mean=loc[i, 0], stddev=scale[i, 0]) for i in range(n_samples)]
-                                tau = tf.stack(tau, axis=0)
-                            else:
-                                tau = self.beta_decoder(_alpha_param=loc, _beta_param=scale)
-                        else:
-                            tau = output
-                            for ix, size in enumerate(self.G_tau_up_layers):
-                                tau = tf.layers.dense(tau, size, name="Generator.tau_up_{}".format(ix),
-                                                      activation=tf.nn.tanh,
-                                                      kernel_initializer=tf.contrib.layers.xavier_initializer())
-                            tau = tf.expand_dims(tau, axis=2)
-
-                            # deconvolutional
-                            n_strides = 2
-                            tau = tf.nn.conv1d_transpose(tau, filters=self.tau_deconv_filter,
-                                                         output_shape=[n_samples,
-                                                                       self.G_tau_up_layers[-1] * n_strides,
-                                                                       self.G_t_deconv_output_depth],
-                                                         strides=n_strides, padding='SAME',
-                                                         name='Generator.tau_deconv')
-                            choice = tf.random_uniform([self.G_t_sample_n], maxval=int(tau.shape[1]),
-                                                       dtype=tf.int64)
-                            tau = tf.gather(tau, choice, axis=1)
-                            tau = tf.reduce_mean(tau, axis=1)
-                            tau = tf.layers.dense(tau, 1, name="Generator.tau_deconv_last",
-                                                  activation=None)
                         # save outputs
                         tau_outputs.append(tau)
 
@@ -688,81 +596,102 @@ class TGGAN:
                         inputs = tf.layers.dense(tau, int(self.W_down_generator.shape[-1]),
                                                  name="Generator.tau_input", activation=tf.nn.tanh)
 
-                #     for j in range(3):
-                #         # Get LSTM output
-                #         with tf.variable_scope('LSTM_CELL') as lstm_cell_scope:
-                #             if i*3 + j > 0: lstm_cell_scope.reuse_variables()
-                #             output, state = self.stacked_lstm.call(inputs, state)
-                #
-                #         if j < 2:
-                #             with tf.name_scope('GEN_NODE'):
-                #                 # Blow up to dimension N using W_up
-                #                 node_logit = tf.matmul(output, self.W_up) + self.b_W_up
-                #
-                #                 # Perform Gumbel softmax to ensure gradients flow
-                #                 if gumbel: node_output = gumbel_softmax(node_logit, temperature=self.temp, hard=True)
-                #                 else:      node_output = tf.nn.softmax(node_logit)
-                #
-                #                 node_outputs.append(node_output)
-                #
-                #                 # Back to dimension d
-                #                 inputs = tf.matmul(node_output, self.W_down_generator)
-                #
-                #         # generate \tau
-                #         if j == 2:
-                #             with tf.variable_scope('TAU_TIME') as tau_scope:
-                #                 if i > 1: tau_scope.reuse_variables()
-                #                 if self.params['use_decoder']:
-                #                     loc = output
-                #                     scale = output
-                #                     for ix, size in enumerate(self.G_tau_up_layers):
-                #                         loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
-                #                                               activation=tf.nn.tanh,
-                #                                               kernel_initializer=tf.contrib.layers.xavier_initializer())
-                #                         scale = tf.layers.dense(scale, size, name="Generator.scale_tau_{}".format(ix),
-                #                                                 activation=tf.nn.tanh,
-                #                                                 kernel_initializer=tf.contrib.layers.xavier_initializer())
-                #                     loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", activation=None)
-                #                     scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", activation=None)
-                #
-                #                     if not self.params['use_beta']:
-                #                         tau = [tf.truncated_normal(
-                #                             [1], mean=loc[i, 0], stddev=scale[i, 0]) for i in range(n_samples)]
-                #                         tau = tf.stack(tau, axis=0)
-                #                     else:
-                #                         tau = self.beta_decoder(_alpha_param=loc, _beta_param=scale)
-                #                 else:
-                #                     tau = output
-                #                     for ix, size in enumerate(self.G_tau_up_layers):
-                #                         tau = tf.layers.dense(tau, size, name="Generator.tau_up_{}".format(ix),
-                #                                               activation=tf.nn.tanh,
-                #                                               kernel_initializer=tf.contrib.layers.xavier_initializer())
-                #                     tau = tf.expand_dims(tau, axis=2)
-                #
-                #                     # deconvolutional
-                #                     n_strides = 2
-                #                     tau = tf.nn.conv1d_transpose(tau, filters=self.tau_deconv_filter,
-                #                                                  output_shape=[n_samples,
-                #                                                                self.G_tau_up_layers[-1] * n_strides,
-                #                                                                self.G_t_deconv_output_depth],
-                #                                                  strides=n_strides, padding='SAME',
-                #                                                  name='Generator.tau_deconv')
-                #                     choice = tf.random_uniform([self.G_t_sample_n], maxval=int(tau.shape[1]),
-                #                                                dtype=tf.int64)
-                #                     tau = tf.gather(tau, choice, axis=1)
-                #                     tau = tf.reduce_mean(tau, axis=1)
-                #                     tau = tf.layers.dense(tau, 1, name="Generator.tau_deconv_last",
-                #                                           activation=None)
-                #                 # save outputs
-                #                 tau_outputs.append(tau)
-                #
-                #                 # convert to input
-                #                 inputs = tf.layers.dense(tau, int(self.W_down_generator.shape[-1]),
-                #                                          name="Generator.tau_input", activation=tf.nn.tanh)
-
-                node_outputs = tf.stack(node_outputs, axis=1)
-                tau_outputs = tf.stack(tau_outputs, axis=1)
+            node_outputs = tf.stack(node_outputs, axis=1)
+            print('node_outputs', node_outputs.shape)
+            tau_outputs = tf.stack(tau_outputs, axis=1)
         return x_output, t0_res_output, node_outputs, tau_outputs
+
+    def generate_time_t0(self, output):
+        n_samples = int(output.shape[0])
+        if self.params['use_decoder']:
+            with tf.name_scope('t0_repara_decoder'):
+                loc_t0 = output
+                scale_t0 = output
+                for ix, size in enumerate(self.G_t0_up_layers):
+                    loc_t0 = tf.layers.dense(loc_t0, size,
+                                             name="Generator.loc_t0_{}".format(ix),
+                                             activation=tf.nn.tanh)
+                    scale_t0 = tf.layers.dense(scale_t0, size,
+                                               name="Generator.scale_t0_{}".format(ix),
+                                               activation=tf.nn.tanh)
+                loc_t0 = tf.layers.dense(loc_t0, 1, name="Generator.loc_t0_last",
+                                         activation=None)
+                scale_t0 = tf.layers.dense(scale_t0, 1, name="Generator.scale_t0_last",
+                                           activation=None)
+
+                t0_wait = [tf.truncated_normal([1], mean=loc_t0[i, 0], stddev=scale_t0[i, 0])
+                           for i in range(n_samples)]
+                t0_wait = tf.stack(t0_wait, axis=0)
+        else:
+            with tf.name_scope('t0_deep_decoder'):
+                t0_wait = output
+                for ix, size in enumerate(self.G_t0_up_layers):
+                    t0_wait = tf.layers.dense(t0_wait, size,
+                                              name="Generator.t0_up_{}".format(ix),
+                                              activation=tf.nn.tanh)
+                t0_wait = tf.expand_dims(t0_wait, axis=2)
+
+                # deconvolutional
+                n_strides = 2
+                t0_wait = tf.nn.conv1d_transpose(
+                    t0_wait, filters=self.t0_deconv_filter,
+                    output_shape=[n_samples, int(t0_wait.shape[1]) * n_strides,
+                                  self.G_t_deconv_output_depth],
+                    strides=n_strides, padding='SAME',
+                    name='Generator.t0_deconv')
+
+                choice = tf.random_uniform([self.G_t_sample_n], maxval=t0_wait.shape[1],
+                                           dtype=tf.int64)
+                t0_wait = tf.gather(t0_wait, choice, axis=1)
+                t0_wait = tf.reduce_mean(t0_wait, axis=1)
+                t0_wait = tf.layers.dense(t0_wait, 1, name="Generator.t0_deconv_last",
+                                          activation=None)
+        return t0_wait
+
+    def generate_time_tau(self, output, reuse=False):
+        n_samples = int(output.shape[0])
+        if self.params['use_decoder']:
+            loc = output
+            scale = output
+            for ix, size in enumerate(self.G_tau_up_layers):
+                loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
+                                      activation=tf.nn.tanh,
+                                      kernel_initializer=tf.contrib.layers.xavier_initializer())
+                scale = tf.layers.dense(scale, size, name="Generator.scale_tau_{}".format(ix),
+                                        activation=tf.nn.tanh,
+                                        kernel_initializer=tf.contrib.layers.xavier_initializer())
+            loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", activation=None)
+            scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", activation=None)
+
+            if not self.params['use_beta']:
+                tau = [tf.truncated_normal(
+                    [1], mean=loc[i, 0], stddev=scale[i, 0]) for i in range(n_samples)]
+                tau = tf.stack(tau, axis=0)
+            else:
+                tau = self.beta_decoder(_alpha_param=loc, _beta_param=scale)
+        else:
+            tau = output
+            for ix, size in enumerate(self.G_tau_up_layers):
+                tau = tf.layers.dense(tau, size, name="Generator.tau_up_{}".format(ix),
+                                      activation=tf.nn.tanh,
+                                      kernel_initializer=tf.contrib.layers.xavier_initializer())
+            tau = tf.expand_dims(tau, axis=2)
+
+            # deconvolutional
+            n_strides = 2
+            tau = tf.nn.conv1d_transpose(tau, filters=self.tau_deconv_filter,
+                                         output_shape=[n_samples,
+                                                       self.G_tau_up_layers[-1] * n_strides,
+                                                       self.G_t_deconv_output_depth],
+                                         strides=n_strides, padding='SAME',
+                                         name='Generator.tau_deconv')
+            choice = tf.random_uniform([self.G_t_sample_n], maxval=int(tau.shape[1]),
+                                       dtype=tf.int64)
+            tau = tf.gather(tau, choice, axis=1)
+            tau = tf.reduce_mean(tau, axis=1)
+            tau = tf.layers.dense(tau, 1, name="Generator.tau_deconv_last",
+                                  activation=None)
+        return tau
 
     def beta_decoder(self, _alpha_param, _beta_param, B = 5):
         # B is for shape augmentation
@@ -893,6 +822,8 @@ class TGGAN:
 
         if not os.path.isdir(tensorboard_log_path):
             os.makedirs(tensorboard_log_path)
+        else:
+            shutil.rmtree(tensorboard_log_path)
 
         log("**** save computing graph to tensorboard in folder {}. ****".format(tensorboard_log_path))
         summ_writer = tf.summary.FileWriter(tensorboard_log_path, self.session.graph)
