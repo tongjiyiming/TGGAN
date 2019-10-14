@@ -571,7 +571,7 @@ class TGGAN:
                             t0_res_output = t0
                         else:
                             t0_wait = self.generate_time_t0(output)
-                            t0_wait = self.time_constraint(t0_wait, method=constraint_method) * self.t_end
+                            t0_wait = self.time_constraint(t0_wait, method=self.params['constraint_method']) * self.t_end
 
                             condition = tf.math.equal(tf.argmax(x_output, axis=-1), 1)
                             t0_wait = tf.where(condition, tf.zeros_like(t0_wait), t0_wait)
@@ -616,7 +616,7 @@ class TGGAN:
                         tau = self.generate_time_tau(output)
                         self.tau = tau
 
-                        tau = self.time_constraint(tau, method=constraint_method) * res_time
+                        tau = self.time_constraint(tau, method=self.params['constraint_method']) * res_time
                         res_time = t0_res_output - tau
                         res_time = tf.stop_gradient(res_time)
 
@@ -649,20 +649,6 @@ class TGGAN:
                     (tf.math.less(1., max_), lambda: t / max_)
                 ], lambda : t)
 
-                # res = []
-                # min_ = tf.math.reduce_min(t, axis=0)[0]
-                # for i in range(self.batch_size):
-                #     val = t[i, 0]
-                #     val = tf.cond(tf.math.less(min_, 0.), true_fn=lambda : val - min_, false_fn=lambda : val)
-                #     res.append(val)
-                #
-                # max_ = tf.math.reduce_max(res, axis=0)
-                # t = []
-                # for i in range(self.batch_size):
-                #     val = res[i]
-                #     val = tf.cond(tf.math.less(1., max_), true_fn=lambda: val / max_, false_fn=lambda: val)
-                #     t.append(val)
-                # t = tf.expand_dims(tf.stack(t, axis=0), axis=1)
         return t
 
     def generate_time_t0(self, output):
@@ -708,14 +694,6 @@ class TGGAN:
                                   self.G_t_deconv_output_depth],
                     strides=n_strides, padding='SAME',
                     name='Generator.t0_deconv')
-
-                # choice = tf.random_uniform([self.G_t_sample_n], maxval=t0_wait.shape[1], dtype=tf.int64)
-                # t0_wait = tf.gather(t0_wait, choice, axis=1)
-                # t0_wait = tf.math.l2_normalize(t0_wait, axis=-1)
-                # self.W_down_t0 = tf.math.l2_normalize(self.W_down_t0, axis=0)
-                # t0_wait = tf.matmul(t0_wait, self.W_down_t0)
-                # t0_wait = tf.reduce_mean(t0_wait, axis=1) * t_max
-                # self.t0_wait = t0_wait
 
                 choice = tf.random_uniform([self.G_t_sample_n], maxval=t0_wait.shape[1],
                                            dtype=tf.int64)
@@ -764,13 +742,6 @@ class TGGAN:
                                                        self.G_t_deconv_output_depth],
                                          strides=n_strides, padding='SAME',
                                          name='Generator.tau_deconv')
-            # choice = tf.random_uniform([self.G_t_sample_n], maxval=int(tau.shape[1]), dtype=tf.int64)
-            # tau = tf.gather(tau, choice, axis=1)
-            # tau = tf.math.l2_normalize(tau, axis=-1)
-            # self.W_down_tau = tf.math.l2_normalize(self.W_down_tau, axis=0)
-            # tau = tf.matmul(tau, self.W_down_tau)
-            # tau = tf.reduce_mean(tau, axis=1) * t_max
-            # self.tau = tau
 
             choice = tf.random_uniform([self.G_t_sample_n], maxval=tau.shape[1],
                                        dtype=tf.int64)
@@ -1208,7 +1179,7 @@ if __name__ == '__main__':
     n_nodes = 91
     n_edges = n_nodes * n_nodes
     scale = 0.1
-    rw_len = 1
+    rw_len = 2
     batch_size = 8
     train_ratio = 0.8
     t_end = 1.
