@@ -95,7 +95,7 @@ def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_end,
             # print('selected start:', selected_walks[0])
             t_res_0 = t_end - walk_day_times[start_walk_inx-1, 0]
 
-        # convert to residual time \tau
+        # convert to residual time
         selected_times = t_end - selected_times
 
         # # convert to edge index

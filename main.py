@@ -105,14 +105,15 @@ def main(args):
         output_directory='outputs-auth-user-{}'.format(userid)
 
         log_dict = tggan.train(
-            # n_eval_loop=n_eval_loop,
+            train_edges=train_edges, test_edges=test_edges,
+            n_eval_loop=n_eval_loop,
            stopping=None,
            eval_transitions=eval_transitions,
            eval_every=eval_every, plot_every=plot_every,
            max_patience=20, max_iters=max_iters,
            model_name=model_name,
            save_directory=save_directory,
-           # output_directory=output_directory,
+           output_directory=output_directory,
            )
         log('-'*40)
 
@@ -190,7 +191,8 @@ def main(args):
         output_directory='outputs-user-{}'.format(userid)
 
         log_dict = tggan.train(
-            # n_eval_loop=n_eval_loop,
+            train_edges=train_edges, test_edges=test_edges,
+            n_eval_loop=n_eval_loop,
            stopping=None,
            eval_transitions=eval_transitions,
            eval_every=eval_every, plot_every=plot_every,
