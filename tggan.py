@@ -68,9 +68,10 @@ class TGGAN:
                  generator_t0_up_layers=[128],
                  generator_tau_up_layers=[64],
                  generator_time_deconv_output_depth=8,
-                 generator_time_sample_num=2,
-                 generator_layers=[40, 10],
-                 discriminator_layers=[30, 13],
+                 generator_time_sample_num=4,
+                 constraint_method='min_max',
+                 generator_layers=[40],
+                 discriminator_layers=[30],
                  W_down_generator_size=128, W_down_discriminator_size=128, batch_size=128, noise_dim=16,
                  noise_type="Gaussian", learning_rate=0.0003, disc_iters=3, wasserstein_penalty=10,
                  l2_penalty_generator=1e-7, l2_penalty_discriminator=5e-5, temp_start=5.0, min_temperature=0.5,
@@ -142,6 +143,7 @@ class TGGAN:
             'generator_tau_up_layers': generator_tau_up_layers,
             'generator_time_deconv_output_depth': generator_time_deconv_output_depth,
             'generator_time_sample_num': generator_time_sample_num,
+            'constraint_method': constraint_method,
             'Generator_Layers': generator_layers,
             'Discriminator_Layers': discriminator_layers,
             'W_Down_Generator_size': W_down_generator_size,
@@ -181,13 +183,6 @@ class TGGAN:
         self.G_t_sample_n = self.params['generator_time_sample_num']
 
         # W_down and W_up for generator and discriminator
-        self.t_end = tf.constant(value=self.params['t_end'], name='t_end',
-                                 dtype=tf.float32, shape=[1])
-        self.t0_deconv_filter = tf.get_variable('Generator.t0_deconv_filter',
-                                                shape=[3, self.G_t_deconv_output_depth, 1],
-                                                dtype=tf.float32,
-                                                initializer=tf.contrib.layers.xavier_initializer())
-
         self.W_down_x_generator = tf.get_variable(name='Generator.W_Down_x', dtype=tf.float32,
                                                   shape=[2, 1],
                                                   initializer=tf.contrib.layers.xavier_initializer())
@@ -195,11 +190,37 @@ class TGGAN:
                                                   shape=[2, 1],
                                                   initializer=tf.contrib.layers.xavier_initializer())
 
+        self.t_end = tf.constant(value=self.params['t_end'], name='t_end',
+                                 dtype=tf.float32, shape=[1])
+        self.t0_deconv_filter = tf.get_variable('Generator.t0_deconv_filter',
+                                                shape=[3, self.G_t_deconv_output_depth, 1],
+                                                dtype=tf.float32,
+                                                initializer=tf.contrib.layers.xavier_initializer())
         self.empty_tau = tf.zeros([self.batch_size, 1], dtype=tf.float32, name="empty_tau")
         self.tau_deconv_filter = tf.get_variable('Generator.tau_deconv_filter',
                                                  shape=[3, self.G_t_deconv_output_depth, 1],
                                                  dtype=tf.float32,
                                                  initializer=tf.contrib.layers.xavier_initializer())
+        self.W_down_t0 = tf.get_variable('Generator.W_down_t0', dtype=tf.float32,
+                                         shape=[self.G_t_deconv_output_depth, 1],
+                                         # constraint=lambda w: tf.clip_by_value(w, 1e-6, 1./(1+self.G_t_deconv_output_depth)),
+                                         # initializer=tf.random_uniform_initializer(1e-2, 1e-1),
+                                         initializer=tf.contrib.layers.xavier_initializer(),
+                                         )
+        self.W_down_t0_bias = tf.get_variable('Generator.W_down_t0_bias', dtype=tf.float32,
+                                         shape=1,
+                                         constraint=lambda w: tf.clip_by_value(w, 0, 1.),
+                                         initializer=tf.contrib.layers.xavier_initializer())
+        self.W_down_tau = tf.get_variable('Generator.W_down_tau', dtype=tf.float32,
+                                         shape=[self.G_t_deconv_output_depth, 1],
+                                         # constraint=lambda w: tf.clip_by_value(w, 1e-6, 1./self.G_t_deconv_output_depth),
+                                         # initializer=tf.random_uniform_initializer(1e-2, 1e-1),
+                                         initializer=tf.contrib.layers.xavier_initializer(),
+                                          )
+        self.W_down_tau_bias = tf.get_variable('Generator.W_down_tau_bias', dtype=tf.float32,
+                                         shape=1,
+                                         constraint=lambda w: tf.clip_by_value(w, 0, 1.),
+                                         initializer=tf.contrib.layers.xavier_initializer())
 
         self.W_down_generator = tf.get_variable('Generator.W_Down',
                                                 shape=[self.N, self.params['W_Down_Generator_size']],
@@ -510,6 +531,7 @@ class TGGAN:
             # self.stacked_lstm_x = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, "start") for size in self.G_layers])
 
             # LSTM tine steps
+            left_time = None
             for i in range(self.rw_len + 1):
                 if i == 0:
                     with tf.variable_scope('LSTM_CELL'):
@@ -549,11 +571,15 @@ class TGGAN:
                             t0_res_output = t0
                         else:
                             t0_wait = self.generate_time_t0(output)
-                            # t0_wait = tf.nn.relu(t0_wait - 0.1) - tf.nn.relu(t0_wait - self.t_end)
+                            t0_wait = self.time_constraint(t0_wait, method=constraint_method) * self.t_end
 
-                            # t0_output = tf.nn.relu(self.t_end - t0_wait, name='Generator.t0_res')
                             condition = tf.math.equal(tf.argmax(x_output, axis=-1), 1)
-                            t0_res_output = tf.where(condition, tf.ones_like(t0_wait), t0_wait)
+                            t0_wait = tf.where(condition, tf.zeros_like(t0_wait), t0_wait)
+
+                            t0_res_output = self.t_end - t0_wait
+
+                            res_time = t0_res_output
+                            res_time = tf.stop_gradient(res_time)
 
                             # convert to input
                             inputs = tf.layers.dense(t0_res_output, self.params['W_Down_Discriminator_size'],
@@ -588,6 +614,11 @@ class TGGAN:
                         if i > 1: tf.get_variable_scope().reuse_variables()
 
                         tau = self.generate_time_tau(output)
+                        self.tau = tau
+
+                        tau = self.time_constraint(tau, method=constraint_method) * res_time
+                        res_time = t0_res_output - tau
+                        res_time = tf.stop_gradient(res_time)
 
                         # save outputs
                         tau_outputs.append(tau)
@@ -600,6 +631,39 @@ class TGGAN:
             print('node_outputs', node_outputs.shape)
             tau_outputs = tf.stack(tau_outputs, axis=1)
         return x_output, t0_res_output, node_outputs, tau_outputs
+
+    def time_constraint(self, t, method='min_max'):
+        with tf.name_scope('time_constraint'):
+            if method == 'relu':
+                t = tf.nn.relu(t) - tf.nn.relu(t - 1.)
+            elif method == 'l2_norm':
+                t = (tf.nn.l2_normalize(t, axis=0) + 1.) / 2.
+            elif method == 'min_max':
+                min_ = tf.math.reduce_min(t, axis=0)[0]
+                t = tf.case([
+                    (tf.math.less(min_, 0.), lambda : t - min_)
+                ], lambda : t)
+
+                max_ = tf.math.reduce_max(t, axis=0)[0]
+                t = tf.case([
+                    (tf.math.less(1., max_), lambda: t / max_)
+                ], lambda : t)
+
+                # res = []
+                # min_ = tf.math.reduce_min(t, axis=0)[0]
+                # for i in range(self.batch_size):
+                #     val = t[i, 0]
+                #     val = tf.cond(tf.math.less(min_, 0.), true_fn=lambda : val - min_, false_fn=lambda : val)
+                #     res.append(val)
+                #
+                # max_ = tf.math.reduce_max(res, axis=0)
+                # t = []
+                # for i in range(self.batch_size):
+                #     val = res[i]
+                #     val = tf.cond(tf.math.less(1., max_), true_fn=lambda: val / max_, false_fn=lambda: val)
+                #     t.append(val)
+                # t = tf.expand_dims(tf.stack(t, axis=0), axis=1)
+        return t
 
     def generate_time_t0(self, output):
         n_samples = int(output.shape[0])
@@ -618,9 +682,14 @@ class TGGAN:
                                          activation=None)
                 scale_t0 = tf.layers.dense(scale_t0, 1, name="Generator.scale_t0_last",
                                            activation=None)
+                # loc_t0 = tf.clip_by_value(loc_t0, 0, 1)
+                # scale_t0 = tf.clip_by_value(scale_t0, 0, 1)
+                if not self.params['use_beta']:
+                    t0_wait = [tf.truncated_normal([1], mean=loc_t0[i, 0], stddev=scale_t0[i, 0])
+                               for i in range(n_samples)]
+                else:
+                    t0_wait = self.beta_decoder(_alpha_param=loc_t0, _beta_param=scale_t0)
 
-                t0_wait = [tf.truncated_normal([1], mean=loc_t0[i, 0], stddev=scale_t0[i, 0])
-                           for i in range(n_samples)]
                 t0_wait = tf.stack(t0_wait, axis=0)
         else:
             with tf.name_scope('t0_deep_decoder'):
@@ -640,15 +709,25 @@ class TGGAN:
                     strides=n_strides, padding='SAME',
                     name='Generator.t0_deconv')
 
+                # choice = tf.random_uniform([self.G_t_sample_n], maxval=t0_wait.shape[1], dtype=tf.int64)
+                # t0_wait = tf.gather(t0_wait, choice, axis=1)
+                # t0_wait = tf.math.l2_normalize(t0_wait, axis=-1)
+                # self.W_down_t0 = tf.math.l2_normalize(self.W_down_t0, axis=0)
+                # t0_wait = tf.matmul(t0_wait, self.W_down_t0)
+                # t0_wait = tf.reduce_mean(t0_wait, axis=1) * t_max
+                # self.t0_wait = t0_wait
+
                 choice = tf.random_uniform([self.G_t_sample_n], maxval=t0_wait.shape[1],
                                            dtype=tf.int64)
                 t0_wait = tf.gather(t0_wait, choice, axis=1)
                 t0_wait = tf.reduce_mean(t0_wait, axis=1)
                 t0_wait = tf.layers.dense(t0_wait, 1, name="Generator.t0_deconv_last",
                                           activation=None)
+                t0_wait = (tf.nn.l2_normalize(t0_wait, axis=0) + 1) / 2
+                self.t0_wait = t0_wait
         return t0_wait
 
-    def generate_time_tau(self, output, reuse=False):
+    def generate_time_tau(self, output):
         n_samples = int(output.shape[0])
         if self.params['use_decoder']:
             loc = output
@@ -685,7 +764,15 @@ class TGGAN:
                                                        self.G_t_deconv_output_depth],
                                          strides=n_strides, padding='SAME',
                                          name='Generator.tau_deconv')
-            choice = tf.random_uniform([self.G_t_sample_n], maxval=int(tau.shape[1]),
+            # choice = tf.random_uniform([self.G_t_sample_n], maxval=int(tau.shape[1]), dtype=tf.int64)
+            # tau = tf.gather(tau, choice, axis=1)
+            # tau = tf.math.l2_normalize(tau, axis=-1)
+            # self.W_down_tau = tf.math.l2_normalize(self.W_down_tau, axis=0)
+            # tau = tf.matmul(tau, self.W_down_tau)
+            # tau = tf.reduce_mean(tau, axis=1) * t_max
+            # self.tau = tau
+
+            choice = tf.random_uniform([self.G_t_sample_n], maxval=tau.shape[1],
                                        dtype=tf.int64)
             tau = tf.gather(tau, choice, axis=1)
             tau = tf.reduce_mean(tau, axis=1)
@@ -1121,7 +1208,7 @@ if __name__ == '__main__':
     n_nodes = 91
     n_edges = n_nodes * n_nodes
     scale = 0.1
-    rw_len = 3
+    rw_len = 1
     batch_size = 8
     train_ratio = 0.8
     t_end = 1.
@@ -1162,16 +1249,18 @@ if __name__ == '__main__':
 
     tggan.session.run(tggan.init_op)
 
-    # fake_x_inputs, fake_t0_res_inputs, fake_v_inputs, fake_u_inputs, fake_tau_inputs, fake_lengths, \
-    # real_data, real_x_inputs, real_t0_res_inputs, real_v_inputs, real_u_inputs, real_tau_inputs, real_lengths, \
-    # disc_real, disc_fake \
+    # fake_x_inputs, fake_t0_res_inputs, fake_node_inputs, fake_tau_inputs, \
+    # real_data, real_x_inputs, real_t0_res_inputs, real_node_inputs, real_tau_inputs, real_lengths, \
+    # disc_real, disc_fake, \
+    # t0_wait,tau \
     #     = tggan.session.run([
     #     tggan.fake_x_inputs, tggan.fake_t0_res_inputs,
-    #     tggan.fake_v_inputs, tggan.fake_u_inputs, tggan.fake_tau_inputs, tggan.fake_lengths,
+    #     tggan.fake_node_inputs, tggan.fake_tau_inputs,
     #     tggan.real_data, tggan.real_x_inputs, tggan.real_t0_res_inputs,
-    #     tggan.real_v_inputs, tggan.real_u_inputs, tggan.real_tau_inputs,
+    #     tggan.real_node_inputs, tggan.real_tau_inputs,
     #     tggan.real_lengths,
-    #     tggan.disc_real, tggan.disc_fake
+    #     tggan.disc_real, tggan.disc_fake,
+    #     tggan.t0_wait, tggan.tau
     # ], feed_dict={tggan.temp: temperature})
     #
     # tggan.session.close()
@@ -1179,15 +1268,15 @@ if __name__ == '__main__':
     # print('real_data:\n', real_data)
     # print('real_x_inputs:\n', real_x_inputs)
     # print('real_t0_res_inputs:\n', real_t0_res_inputs)
-    # print('real_v_inputs:\n', np.argmax(real_v_inputs, axis=-1))
-    # print('real_u_inputs:\n', np.argmax(real_u_inputs, axis=-1))
+    # print('real_node_inputs:\n', np.argmax(real_node_inputs, axis=-1))
     # print('real_tau_inputs:\n', real_tau_inputs)
     # print('real_lengths:\n', real_lengths)
     #
     # print('fake_x_inputs:\n', fake_x_inputs)
+    # print('t0_wait:\n', t0_wait)
     # print('fake_t0_res_inputs:\n', fake_t0_res_inputs)
-    # print('fake_v_inputs:\n', np.argmax(fake_v_inputs, axis=-1))
-    # print('fake_u_inputs:\n', np.argmax(fake_u_inputs, axis=-1))
+    # print('fake_node_inputs:\n', np.argmax(fake_node_inputs, axis=-1))
+    # print('tau:\n', tau)
     # print('fake_tau_inputs:\n', fake_tau_inputs)
     # print('fake_lengths:\n', fake_lengths)
 

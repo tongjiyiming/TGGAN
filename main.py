@@ -55,6 +55,11 @@ def main(args):
         use_wgan = args.use_wgan
         use_beta = args.use_beta
         use_decoder = args.use_decoder
+        constraint_method = args.constraint_method
+        print('****** use wgan:', use_wgan)
+        print('****** use decoder:', use_decoder)
+        print('****** use beta:', use_beta)
+        print('****** use constraint_method:', constraint_method)
 
         # random data from metro
         userid = args.userid
@@ -69,9 +74,9 @@ def main(args):
                                 )
 
         tggan = TGGAN(N=n_nodes, rw_len=rw_len,
-                      # t_end=t_end,
+                      t_end=t_end,
                       walk_generator=walker.walk, batch_size=batch_size, gpu_id=gpu_id,
-                      noise_type="Uniform",
+                      noise_type="Gaussian",
                       disc_iters=3,
                       W_down_discriminator_size=embedding_size,
                       W_down_generator_size=embedding_size,
@@ -83,9 +88,10 @@ def main(args):
                       temp_start=5,
                       learning_rate=lr,
                       use_gumbel=True,
-                      # use_wgan=use_wgan,
-                      # use_beta=use_beta,
-                      # use_decoder=use_decoder,
+                      use_wgan=use_wgan,
+                      use_beta=use_beta,
+                      use_decoder=use_decoder,
+                      constraint_method=constraint_method,
                       )
 
         max_iters = 10000
@@ -130,9 +136,11 @@ def main(args):
         use_wgan = args.use_wgan
         use_beta = args.use_beta
         use_decoder = args.use_decoder
+        constraint_method = args.constraint_method
         print('****** use wgan:', use_wgan)
         print('****** use decoder:', use_decoder)
         print('****** use beta:', use_beta)
+        print('****** use constraint_method:', constraint_method)
 
         time_deconv = args.time_deconv
         time_sample_num = args.time_sample_num
@@ -168,6 +176,7 @@ def main(args):
                       use_wgan=use_wgan,
                       use_beta=use_beta,
                       use_decoder=use_decoder,
+                      constraint_method=constraint_method,
                       )
 
         max_iters = 100000
@@ -242,6 +251,8 @@ if __name__ == '__main__':
                         help="deconv output channels number")
     parser.add_argument("-ts", "--time_sample_num", default=4, type=int,
                         help="time sampling number")
+    parser.add_argument("-cm", "--constraint_method", default='min_max', type=str,
+                        help="time constraint computing method")
     parser.add_argument("-ct", "--continueTraining", default=False, type=bool,
                         help="if this run is restored from a corrupted run")
 
