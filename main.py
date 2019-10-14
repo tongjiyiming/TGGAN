@@ -64,7 +64,7 @@ def main(args):
         # random data from metro
         userid = args.userid
         file = args.file
-        edges = np.loadtxt(file)
+        edges = np.loadtxt(file, dtype=np.float32)
         train_edges, test_edges = Split_Train_Test(edges, train_ratio)
 
 
@@ -149,7 +149,7 @@ def main(args):
         # random data from metro
         userid = args.userid
         file = args.file
-        edges = np.loadtxt(file)
+        edges = np.loadtxt(file, dtype=np.float32)
         train_edges, test_edges = Split_Train_Test(edges, train_ratio)
 
         walker = TemporalWalker(n_nodes, train_edges, t_end,

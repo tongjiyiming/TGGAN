@@ -170,6 +170,7 @@ class TGGAN:
 
         self.N = N
         self.rw_len = rw_len
+        self.n_length = rw_len - 1 # do not allow zero length
         self.batch_size = batch_size
         self.noise_dim = self.params['noise_dim']
         self.G_layers = self.params['Generator_Layers']
@@ -457,9 +458,10 @@ class TGGAN:
                     n_samples, reuse, z, x_input=self.start_x_1, t0_input=self.start_t0,
                     gumbel=gumbel, legacy=legacy)
             else:
-                t0_input = fake_tau_outputs[:, -1, :1]
-                edge_input = fake_node_outputs[:, -2:, :]
+                t0_input = fake_tau_outputs[:, -2, :1] # second from end time is correct residual
                 tau_input = fake_tau_outputs[:, -1, :]
+                edge_input = fake_node_outputs[:, -2:, :] # first from end node is correct
+
                 fake_x_output, fake_t0_res_output, \
                 fake_node_outputs, fake_tau_outputs, fake_length_outputs = self.generator_function(
                     n_samples, reuse, z,
@@ -469,7 +471,7 @@ class TGGAN:
             fake_x_outputs_discrete = tf.argmax(fake_x_output, axis=-1)
             fake_node_outputs_discrete = tf.argmax(fake_node_outputs, axis=-1)
             # notice lengths >= 1, zero is not valid
-            fake_length_outputs_discrete = tf.argmax(fake_length_outputs, axis=-1) + 1
+            fake_length_outputs_discrete = tf.argmax(fake_length_outputs, axis=-1)
 
             fake_x.append(fake_x_outputs_discrete)
             fake_t0.append(fake_t0_res_output)
@@ -609,9 +611,9 @@ class TGGAN:
                         if length_input is not None:
                             max_length = length_input
                         else:
-                            max_length = tf.random_uniform(minval=.01, maxval=self.rw_len-0.01, shape=[self.batch_size, 1])
+                            max_length = tf.random_uniform(minval=.01, maxval=self.rw_len+0.9, shape=[self.batch_size, 1])
                             max_length = tf.cast(max_length, dtype=tf.int64)
-                            max_length = tf.one_hot(max_length, self.rw_len)
+                            max_length = tf.one_hot(max_length, self.rw_len+1)
                             self.max_length = max_length
 
                 # generate temporal edge part
@@ -1000,14 +1002,15 @@ class TGGAN:
                                 smpls = np.c_[smpls, e[:, j*2 : (j+1)*2], t0[:, :1]]
                             if i > 0 and j > 0: # ignore the first edge since it repeats last eval_loop
                                 smpls = np.c_[smpls, e[:, j*2 : (j+1)*2], t0[:, :1]]
+                        # judge if reach max length
                         for b in range(self.batch_size):
                             b_le = le[b, 0]
-                            if i == 0 and b_le < self.rw_len:
+                            if i == 0 and b_le < self.rw_len: # end
                                 smpls[b, (i * self.rw_len + b_le) * 3:] = -1
                                 stop[b] = True
 
                             start = i * self.rw_len - i + 1
-                            if i > 0 and not stop[b] and b_le == 1:
+                            if i > 0 and not stop[b] and b_le <= 1: # end
                                 smpls[b, start*3 : (start+self.rw_len-1)*3] = -1
                                 stop[b] = True
                             if i > 0 and not stop[b] and b_le > 1 and b_le < self.rw_len:
