@@ -130,6 +130,7 @@ def main(args):
         train_ratio = 0.9
         t_end = 1.
         embedding_size = args.embedding_size
+        length_embedding_size = args.length_embedding_size
         gpu_id = 0
 
         lr = args.learningrate
@@ -137,14 +138,11 @@ def main(args):
         use_wgan = args.use_wgan
         use_beta = args.use_beta
         use_decoder = args.use_decoder
-        constraint_method = args.constraint_method
-        print('****** use wgan:', use_wgan)
-        print('****** use decoder:', use_decoder)
-        print('****** use beta:', use_beta)
-        print('****** use constraint_method:', constraint_method)
-
         time_deconv = args.time_deconv
         time_sample_num = args.time_sample_num
+        constraint_method = args.constraint_method
+        n_eval_loop = args.n_eval_loop
+
 
         # random data from metro
         userid = args.userid
@@ -164,6 +162,8 @@ def main(args):
                       disc_iters=3,
                       W_down_discriminator_size=embedding_size,
                       W_down_generator_size=embedding_size,
+                      W_down_len_generator_size=length_embedding_size,
+                      W_down_len_discriminator_size=length_embedding_size,
                       generator_time_deconv_output_depth=time_deconv,
                       generator_time_sample_num=time_sample_num,
                       l2_penalty_generator=1e-7,
@@ -183,9 +183,8 @@ def main(args):
         max_iters = 100000
         eval_every = 1000
         plot_every = 1000
-        n_eval_loop = 1
-        transitions_per_iter = batch_size * n_eval_loop
-        eval_transitions = transitions_per_iter * 1000
+        transitions_per_iter = batch_size
+        eval_transitions = transitions_per_iter * 100
         model_name = 'metro-user-{}'.format(userid)
         save_directory = "snapshots-user-{}".format(userid)
         output_directory='outputs-user-{}'.format(userid)
@@ -239,7 +238,7 @@ if __name__ == '__main__':
                         help="random walks batch size in DeepTemporalWalk")
 
     # hyperparameter for GAN
-    parser.add_argument("-lr", "--learningrate", default=0.00003, type=float,
+    parser.add_argument("-lr", "--learningrate", default=0.0003, type=float,
                         help="if this run should run all evaluations")
     parser.add_argument("-uw", "--use_wgan", default=False, type=bool,
                         help="if use WGAN loss function")
@@ -255,6 +254,8 @@ if __name__ == '__main__':
                         help="time sampling number")
     parser.add_argument("-cm", "--constraint_method", default='min_max', type=str,
                         help="time constraint computing method")
+    parser.add_argument("-le", "--length_embedding_size", default=3, type=int,
+                        help="embedding size of discrete length parameters")
     parser.add_argument("-ct", "--continueTraining", default=False, type=bool,
                         help="if this run is restored from a corrupted run")
 

@@ -102,7 +102,8 @@ def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_end,
             walks_mat = np.zeros((rw_len, 3), dtype=np.float32) - 1.
             length = 0.
         else:
-            walks_mat = np.c_[selected_walks, selected_times]
+            selected_res_times = t_end - selected_times
+            walks_mat = np.c_[selected_walks, selected_res_times]
             length = len(selected_walks)
 
             if rw_len > len(selected_walks):
