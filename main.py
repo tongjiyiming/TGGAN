@@ -256,6 +256,8 @@ if __name__ == '__main__':
                         help="time constraint computing method")
     parser.add_argument("-le", "--length_embedding_size", default=3, type=int,
                         help="embedding size of discrete length parameters")
+    parser.add_argument("-ne", "--n_eval_loop", default=3, type=int,
+                        help="evaluation loops number, important to reach end during evaluation.")
     parser.add_argument("-ct", "--continueTraining", default=False, type=bool,
                         help="if this run is restored from a corrupted run")
 
