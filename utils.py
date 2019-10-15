@@ -110,7 +110,7 @@ def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_end,
             walks_mat = np.r_[walks_mat, [[-1, -1, -1]] * n_stops]
 
         # add start resdidual time
-        walks_mat = np.r_[[[x]*2 + [t_res_0]], walks_mat]
+        walks_mat = np.r_[[[x] + [len(selected_walks)] + [t_res_0]], walks_mat]
 
         walks.append(walks_mat)
     return np.array(walks)
