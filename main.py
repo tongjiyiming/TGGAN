@@ -138,13 +138,10 @@ def main(args):
         use_beta = args.use_beta
         use_decoder = args.use_decoder
         constraint_method = args.constraint_method
-        print('****** use wgan:', use_wgan)
-        print('****** use decoder:', use_decoder)
-        print('****** use beta:', use_beta)
-        print('****** use constraint_method:', constraint_method)
-
         time_deconv = args.time_deconv
         time_sample_num = args.time_sample_num
+        n_eval_loop = args.n_eval_loop
+
 
         # random data from metro
         userid = args.userid
@@ -183,9 +180,8 @@ def main(args):
         max_iters = 100000
         eval_every = 1000
         plot_every = 1000
-        n_eval_loop = 1
         transitions_per_iter = batch_size * n_eval_loop
-        eval_transitions = transitions_per_iter * 1000
+        eval_transitions = transitions_per_iter * 100
         model_name = 'metro-user-{}'.format(userid)
         save_directory = "snapshots-user-{}".format(userid)
         output_directory='outputs-user-{}'.format(userid)
@@ -255,6 +251,8 @@ if __name__ == '__main__':
                         help="time sampling number")
     parser.add_argument("-cm", "--constraint_method", default='min_max', type=str,
                         help="time constraint computing method")
+    parser.add_argument("-ne", "--n_eval_loop", default=2, type=int,
+                        help="number of walk loops")
     parser.add_argument("-ct", "--continueTraining", default=False, type=bool,
                         help="if this run is restored from a corrupted run")
 
