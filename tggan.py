@@ -275,7 +275,8 @@ class TGGAN:
         self.discriminator_function = self.discriminator_recurrent
         self.disc_real = self.discriminator_function(self.real_x_inputs, self.real_t0_res_inputs,
                                                      self.real_node_inputs, self.real_tau_inputs,
-                                                     self.real_length_discretes)
+                                                     self.real_length_discretes,
+                                                     )
         self.disc_fake = self.discriminator_function(self.fake_x_inputs, self.fake_t0_res_inputs,
                                                      self.fake_node_inputs, self.fake_tau_inputs,
                                                      self.fake_length_discretes,
@@ -642,7 +643,7 @@ class TGGAN:
                             if self.rw_len == 1:
                                 max_lengths = tf.zeros(shape=[n_samples, ], dtype=tf.int64)
                                 length_discretes = tf.cast(
-                                    tf.random_uniform(minval=0.5, maxval=1.5, shape=[n_samples, ]), dtype=tf.int64)
+                                    tf.random_uniform(minval=1, maxval=1.5, shape=[n_samples, ]), dtype=tf.int64)
                             else:
                                 max_lengths = tf.constant(self.rw_len - 1, shape=[n_samples, ], dtype=tf.int64)
                                 max_lengths = tf.one_hot(max_lengths, self.rw_len)
@@ -1026,9 +1027,8 @@ class TGGAN:
                         x, t0, e, tau, le = fake_x[i], fake_t0[i], fake_edges[i], fake_t[i], fake_length[i]
                         if q == 0:
                             log('eval_iters: {} eval_loop: {}'.format(q, i))
-                            log('eval start x logit: \n{}'.format(x_logit))
-                            log('eval node logit min: \n{} \nmax: \n{}'.format(
-                                np.min(node_logit, axis=1), np.max(node_logit, axis=1)))
+                            log('eval start x logit min: {} max: {}'.format(x_logit.min(), x_logit.max()))
+                            log('eval node logit min: {} max: {}'.format(node_logit.min(), node_logit.max()))
                             log('generated le: {}'.format(le[:3].reshape(1, -1)[0]))
                             log('generated x: {}'.format(x[:3].reshape(1, -1)[0]))
                             log('generated t0: {}'.format(t0[:3].reshape(1, -1)[0]))
