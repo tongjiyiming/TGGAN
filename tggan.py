@@ -509,7 +509,7 @@ class TGGAN:
         return fake_x, fake_t0, fake_e, fake_tau, fake_len
 
     def generator_recurrent(self, n_samples, reuse=None, z=None,
-                            x_input=None, t0_input=None, edge_input=None, tau_input=None, length_input=None,
+                            x_input=None, x_mode="uniform", t0_input=None, edge_input=None, tau_input=None, length_input=None,
                             gumbel=True, legacy=False):
         """
         Generate random walks using LSTM.
@@ -570,50 +570,59 @@ class TGGAN:
                     initial_states.append((c, h))
 
                 state = initial_states
-                inputs = tf.zeros([n_samples, self.params['W_Down_Generator_size']])
-
-            # LSTM steps
-            node_outputs = []
-            tau_outputs = []
 
             def lstm_cell(lstm_size, name):
                 return tf.contrib.rnn.BasicLSTMCell(lstm_size, reuse=tf.get_variable_scope().reuse,
                                                     name="LSTM_{}".format(name))
 
+            with tf.variable_scope('LSTM_CELL'):
+                self.stacked_lstm = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, "walks") for size in self.G_layers])
+                # self.stacked_lstm_x = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, "start") for size in self.G_layers])
 
-            self.stacked_lstm = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, "walks") for size in self.G_layers])
-            # self.stacked_lstm_x = tf.contrib.rnn.MultiRNNCell([lstm_cell(size, "start") for size in self.G_layers])
+            with tf.name_scope('GEN_START_X'):
+                if x_mode == "uniform":
+                    # generate start x, and its residual time
+                    if x_input is not None:
+                        x_output = x_input
+                    else:
+                        # generate start node binary if not need
+                        x_output = tf.random_uniform(minval=0.7, maxval=1.9, shape=[n_samples, ])
+                        x_output = tf.cast(x_output, dtype=tf.int64)
+                        x_output = tf.one_hot(x_output, 2)
+                elif x_mode == "generate":
+                    # generate start x, and its residual time
+                    if x_input is not None:
+                        x_output = x_input
+                    else:
+                        inputs = tf.zeros([n_samples,self.params['W_Down_Discriminator_size']], dtype=tf.float32)
+                        output, state = self.stacked_lstm.call(inputs, state)
+
+                        # generate start node binary if not need
+                        x_logit = output
+                        for ix, size in enumerate(self.G_x_up_layers):
+                            x_logit = tf.layers.dense(x_logit, size, name="Generator.x_logit_{}".format(ix),
+                                                      reuse=reuse, activation=tf.nn.tanh)
+                        x_logit = tf.layers.dense(x_logit, 2, name="Generator.x_logit_last",
+                                                  reuse=reuse, activation=None)
+                        self.x_logit = x_logit
+                        # Perform Gumbel softmax to ensure gradients flow for e, and end node y
+                        if gumbel: x_output = gumbel_softmax(x_logit, temperature=self.temp, hard=True)
+                        else:      x_output = tf.nn.softmax(x_logit)
+
+                x_down = tf.matmul(x_output, self.W_down_x_generator)
+                # convert to input
+                inputs = tf.layers.dense(x_down, self.params['W_Down_Discriminator_size'],
+                                         name="Generator.x_lstm_input",
+                                         reuse=reuse, activation=tf.nn.tanh)
+
+            # LSTM steps
+            node_outputs = []
+            tau_outputs = []
 
             # LSTM tine steps
             for i in range(self.rw_len + 1):
                 # generate the first three start elements: start x, residual time, and maximum possible length
                 if i == 0:
-                    with tf.variable_scope('LSTM_CELL'):
-                        output, state = self.stacked_lstm.call(inputs, state)
-
-                    with tf.name_scope('GEN_START_X'):
-                        # generate start x, and its residual time
-                        if x_input is not None:
-                            x_output = x_input
-                        else:
-                            # generate start node binary if not need
-                            x_logit = output
-                            for ix, size in enumerate(self.G_x_up_layers):
-                                x_logit = tf.layers.dense(x_logit, size, name="Generator.x_logit_{}".format(ix),
-                                                          reuse=reuse, activation=tf.nn.tanh)
-                            x_logit = tf.layers.dense(x_logit, 2, name="Generator.x_logit_last",
-                                                      reuse=reuse, activation=None)
-                            self.x_logit = x_logit
-                            # Perform Gumbel softmax to ensure gradients flow for e, and end node y
-                            if gumbel: x_output = gumbel_softmax(x_logit, temperature=self.temp, hard=True)
-                            else:      x_output = tf.nn.softmax(x_logit)
-
-                        x_down = tf.matmul(x_output, self.W_down_x_generator)
-                        # convert to input
-                        inputs = tf.layers.dense(x_down, self.params['W_Down_Discriminator_size'],
-                                                 name="Generator.x_lstm_input",
-                                                 reuse=reuse, activation=tf.nn.tanh)
-
                     output, state = self.stacked_lstm.call(inputs, state)
 
                     with tf.name_scope('GEN_START_TIME'):
@@ -1018,8 +1027,8 @@ class TGGAN:
                 real_walks = []
                 real_x_t0 = []
                 for q in range(n_eval_iters):
-                    fake_outputs, x_logit, node_logit = self.session.run([
-                        sample_many, self.x_logit, self.logit], {self.temp: 0.5})
+                    fake_outputs, node_logit = self.session.run([
+                        sample_many, self.logit], {self.temp: 0.5})
                     fake_x, fake_t0, fake_edges, fake_t, fake_length = fake_outputs
                     smpls = None
                     stop = [False] * n_smpls
@@ -1027,7 +1036,7 @@ class TGGAN:
                         x, t0, e, tau, le = fake_x[i], fake_t0[i], fake_edges[i], fake_t[i], fake_length[i]
                         if q == 0:
                             log('eval_iters: {} eval_loop: {}'.format(q, i))
-                            log('eval start x logit min: {} max: {}'.format(x_logit.min(), x_logit.max()))
+                            # log('eval start x logit min: {} max: {}'.format(x_logit.min(), x_logit.max()))
                             log('eval node logit min: {} max: {}'.format(node_logit.min(), node_logit.max()))
                             log('generated le: {}'.format(le[:3].reshape(1, -1)[0]))
                             log('generated x: {}'.format(x[:3].reshape(1, -1)[0]))
