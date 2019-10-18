@@ -136,7 +136,6 @@ def main(args):
         lr = args.learningrate
         continue_training = args.continueTraining
         use_wgan = args.use_wgan
-        use_beta = args.use_beta
         use_decoder = args.use_decoder
         constraint_method = args.constraint_method
         time_deconv = args.time_deconv
@@ -173,7 +172,6 @@ def main(args):
                       learning_rate=lr,
                       use_gumbel=True,
                       use_wgan=use_wgan,
-                      use_beta=use_beta,
                       use_decoder=use_decoder,
                       constraint_method=constraint_method,
                       )
@@ -240,10 +238,8 @@ if __name__ == '__main__':
                         help="if this run should run all evaluations")
     parser.add_argument("-uw", "--use_wgan", default=False, type=bool,
                         help="if use WGAN loss function")
-    parser.add_argument("-ud", "--use_decoder", default=False, type=bool,
-                        help="if decoder function")
-    parser.add_argument("-ub", "--use_beta", default=False, type=bool,
-                        help="if beta for decoder function")
+    parser.add_argument("-ud", "--use_decoder", default='deep', type=str,
+                        help="decoder function")
     parser.add_argument("-es", "--embedding_size", default=32, type=int,
                         help="embedding size of nodes, W_down")
     parser.add_argument("-td", "--time_deconv", default=8, type=int,

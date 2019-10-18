@@ -65,8 +65,8 @@ class TGGAN:
     """
 
     def __init__(self, N, rw_len, walk_generator, t_end,
-                 generator_x_up_layers=[32],
-                 generator_t0_up_layers=[128],
+                 generator_x_up_layers=[64],
+                 generator_t0_up_layers=[64],
                  generator_tau_up_layers=[64],
                  generator_time_deconv_output_depth=8,
                  generator_time_sample_num=4,
@@ -539,7 +539,8 @@ class TGGAN:
         return fake_x, fake_t0, fake_e, fake_tau, fake_len
 
     def generator_recurrent(self, n_samples, reuse=None, z=None,
-                            x_input=None, x_mode="uniform", t0_input=None, edge_input=None, tau_input=None, length_input=None,
+                            x_input=None, x_mode="uniform", t0_input=None, edge_input=None,
+                            tau_input=None, length_input=None, last_end=None,
                             gumbel=True, legacy=False):
         """
         Generate random walks using LSTM.
@@ -600,6 +601,7 @@ class TGGAN:
                     initial_states.append((c, h))
 
                 state = initial_states
+                inputs = tf.zeros([n_samples, self.params['W_Down_Discriminator_size']], dtype=tf.float32)
 
             def lstm_cell(lstm_size, name):
                 return tf.contrib.rnn.BasicLSTMCell(lstm_size, reuse=tf.get_variable_scope().reuse,
@@ -624,7 +626,6 @@ class TGGAN:
                     if x_input is not None:
                         x_output = x_input
                     else:
-                        inputs = tf.zeros([n_samples,self.params['W_Down_Discriminator_size']], dtype=tf.float32)
                         output, state = self.stacked_lstm.call(inputs, state)
 
                         # generate start node binary if not need
@@ -667,6 +668,10 @@ class TGGAN:
                                     t0_res_output, method=self.params['constraint_method']) * self.t_end
                             condition = tf.math.equal(tf.argmax(x_output, axis=-1), 1)
                             t0_res_output = tf.where(condition, tf.ones_like(t0_res_output), t0_res_output)
+
+                            if last_end is not None:
+                                last_end_condition = tf.math.equal(tf.argmax(last_end, axis=-1), 1)
+                                t0_res_output = tf.where(last_end_condition, tf.zeros_like(t0_res_output), t0_res_output)
                         self.t0_res_output = t0_res_output
                         res_time = t0_res_output
                         # res_time = tf.stop_gradient(res_time)
@@ -715,6 +720,9 @@ class TGGAN:
                             if self.params['constraint_method'] != "none":
                                 tau = self.time_constraint(tau, method=self.params['constraint_method']) * res_time
 
+                            last_end_condition = tf.math.equal(tf.argmax(last_end, axis=-1), 1)
+                            tau = tf.where(last_end_condition, tf.zeros_like(tau), tau)
+
                         self.tau = tau
                         res_time = tau
                         # res_time = tf.stop_gradient(res_time)
@@ -726,14 +734,18 @@ class TGGAN:
                         inputs = tf.layers.dense(tau, int(self.W_down_generator.shape[-1]),
                                                  name="Generator.tau_lstm_input", activation=tf.nn.tanh)
 
-                # output, state = self.stacked_lstm.call(inputs, state)
+                output, state = self.stacked_lstm.call(inputs, state)
                 with tf.variable_scope('GEN_END'):
                     if i > 0: tf.get_variable_scope().reuse_variables()
 
                     if length_input is not None:
                         end_outputs = length_input
                     else:
-                        end_logit = tf.layers.dense(output, 2, name="Generator.end_logit",
+                        end_logit = output
+                        for ix, size in enumerate(self.G_x_up_layers):
+                            end_logit = tf.layers.dense(end_logit, size, name="Generator.end_logit_{}".format(ix),
+                                                      reuse=reuse, activation=tf.nn.tanh)
+                        end_logit = tf.layers.dense(end_logit, 2, name="Generator.end_logit",
                                                     reuse=reuse, activation=tf.nn.tanh,
                                                     kernel_initializer=tf.contrib.layers.xavier_initializer())
                         # Perform Gumbel softmax to ensure gradients flow
@@ -741,7 +753,13 @@ class TGGAN:
                             end_output = gumbel_softmax(end_logit, temperature=self.temp, hard=True)
                         else:
                             end_output = tf.nn.softmax(end_logit)
+
                         end_outputs.append(end_output)
+                        last_end = end_output
+
+                        # convert to input
+                        inputs = tf.layers.dense(end_output, int(self.W_down_generator.shape[-1]), reuse=reuse,
+                                                 name="Generator.end_lstm_input", activation=tf.nn.tanh)
 
             node_outputs = tf.stack(node_outputs, axis=1)
             tau_outputs = tf.stack(tau_outputs, axis=1)
@@ -1425,6 +1443,7 @@ class TGGAN:
                         plt.plot(disc_losses, label="Critic loss")
                         plt.plot(gen_losses, label="Generator loss")
                     plt.legend()
+                    plt.tight_layout()
                     plt.savefig('{}/iter_{}_loss_res_final.png'.format(output_directory, _it + 1))
                     plt.close()
                 except:
@@ -1438,6 +1457,7 @@ class TGGAN:
             plt.plot(disc_losses[100::10], label="Critic loss")
             plt.plot(gen_losses[100::10], label="Generator loss")
             plt.legend()
+            plt.tight_layout()
             plt.savefig('{}/{}_loss_res_final.png'.format(output_directory, timestr))
             plt.close()
         except:
@@ -1529,7 +1549,7 @@ if __name__ == '__main__':
     n_edges = n_nodes * n_nodes
     scale = 0.1
     rw_len = 1
-    batch_size = 8
+    batch_size = 32
     train_ratio = 0.8
     t_end = 1.
     embedding_size = 32
@@ -1547,25 +1567,29 @@ if __name__ == '__main__':
                             )
     # log(walker.walk().__next__())
 
-    tggan = TGGAN(N=n_nodes, rw_len=rw_len,
+    tggan = TGGAN(N=n_nodes,
+                  rw_len=rw_len,
                     t_end=t_end,
                     walk_generator=walker.walk, batch_size=batch_size, gpu_id=gpu_id,
                     disc_iters=3,
-                  generator_time_sample_num=4,
+                    generator_time_deconv_output_depth=8,
+                    generator_time_sample_num=4,
                     W_down_discriminator_size=embedding_size,
                     W_down_generator_size=embedding_size,
+                    generator_x_up_layers=[64],
+                    generator_t0_up_layers=[64],
+                    generator_tau_up_layers=[64],
+                    generator_layers=[100, 20],
+                    discriminator_layers=[80, 20],
                     l2_penalty_generator=1e-7,
                     l2_penalty_discriminator=5e-5,
-                    # generator_start_layers=[40, 10],
-                    generator_layers=[50, 10],
-                    discriminator_layers=[40, 10],
-                    # varDecoder_layers=[30],
+                    wasserstein_penalty=1,
+                    noise_type="Gaussian",
                     temp_start=5,
                     learning_rate=lr,
                     use_wgan=True,
                     use_decoder='deep',
                     constraint_method='min_max',
-                    # momentum=0.9
             )
 
     temperature = tggan.params['temp_start']
