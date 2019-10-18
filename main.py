@@ -6,6 +6,7 @@ import argparse
 
 import tensorflow as tf
 import numpy as np
+np.printoptions(supress=True)
 import teneto
 
 from simulation import *

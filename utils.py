@@ -98,14 +98,16 @@ def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_end,
             t_res_0 = t_end - walk_day_times[start_walk_inx-1, 0]
 
         # convert to residual time
-        if len(selected_times) == 0:
+        selected_times = t_end - selected_times
+        length = len(selected_times)
+
+        if length == 0:
             walks_mat = np.zeros((rw_len, 3), dtype=np.float32) - 1.
             length = 0.
         else:
             walks_mat = np.c_[selected_walks, selected_times]
-            length = len(selected_walks)
 
-            if rw_len > len(selected_walks):
+            if rw_len > length:
                 n_stops = rw_len - length
                 walks_mat = np.r_[walks_mat, [[-1., -1., -1.]] * n_stops]
 
@@ -115,6 +117,7 @@ def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_end,
 
         # add start resdidual time and length
         walks_mat = np.r_[[[x] + [length] + [t_res_0]], walks_mat]
+        walks_mat = np.c_[walks_mat, [[0.]] * int(length) + [[1.]] * int(rw_len - length + 1)]
 
         walks.append(walks_mat)
     return np.array(walks)
