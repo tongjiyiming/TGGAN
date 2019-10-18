@@ -71,8 +71,7 @@ def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_end,
         elif init_walk_method is 'exp': probs = Exp_Prob(n)
         else: raise Exception('wrong init_walk_method!')
 
-        if n == 1: start_walk_inx = 0
-        else: start_walk_inx = np.random.choice(n, p=probs)
+        start_walk_inx = np.random.choice(n+1, p=probs)
 
         # choice nodes from start to walker lengths. if isTeleport: sample by the teleport probability
         # which allow sample a nearby nodes based on a small random teleport
@@ -86,31 +85,36 @@ def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_end,
         else:
             selected_walks = walk_day_edges[start_walk_inx:start_walk_inx + rw_len]
             selected_times = walk_day_times[start_walk_inx:start_walk_inx + rw_len]
+
         if isJump:
             raise Exception('isJump not implemented yet')
 
         # get start residual time
-        if start_walk_inx == 0: t_res_0 = t_end
+        if start_walk_inx == 0:
+            t_res_0 = t_end
+        elif start_walk_inx == n:
+            t_res_0 = t_end - walk_day_times[-1, 0]
         else:
-            # print('selected start:', selected_walks[0])
             t_res_0 = t_end - walk_day_times[start_walk_inx-1, 0]
 
         # convert to residual time
-        selected_times = t_end - selected_times
+        if len(selected_times) == 0:
+            walks_mat = np.zeros((rw_len, 3), dtype=np.float32) - 1.
+            length = 0.
+        else:
+            walks_mat = np.c_[selected_walks, selected_times]
+            length = len(selected_walks)
 
-        # # convert to edge index
-        # selected_walks = [nodes_to_edge(e[0], e[1], n_nodes) for e in selected_walks]
+            if rw_len > len(selected_walks):
+                n_stops = rw_len - length
+                walks_mat = np.r_[walks_mat, [[-1., -1., -1.]] * n_stops]
 
         # add a stop sign of -1
-        x = 1
-        if start_walk_inx > 0: x = 0
-        walks_mat = np.c_[selected_walks, selected_times]
-        if rw_len > len(selected_walks):
-            n_stops = rw_len - len(selected_walks)
-            walks_mat = np.r_[walks_mat, [[-1, -1, -1]] * n_stops]
+        x = 1.
+        if start_walk_inx > 0: x = 0.
 
-        # add start resdidual time
-        walks_mat = np.r_[[[x] + [len(selected_walks)] + [t_res_0]], walks_mat]
+        # add start resdidual time and length
+        walks_mat = np.r_[[[x] + [length] + [t_res_0]], walks_mat]
 
         walks.append(walks_mat)
     return np.array(walks)
@@ -147,7 +151,7 @@ def Sample_Posterior_KDE(kernel, loc, scale, n):
 
 def Exp_Prob(n):
     # n is the total number of edges
-    if n == 1: return [1.]
+    n = n + 1
     c = 1. / np.arange(1, n + 1, dtype=np.int)
     #     c = np.cbrt(1. / np.arange(1, n+1, dtype=np.int))
     exp_c = np.exp(c)
@@ -155,13 +159,13 @@ def Exp_Prob(n):
 
 def Linear_Prob(n):
     # n is the total number of edges
-    if n == 1: return [1.]
+    n = n + 1
     c = np.arange(n+1, 1, dtype=np.int)
     return c / c.sum()
 
 def Uniform_Prob(n):
     # n is the total number of edges
-    if n == 1: return [1.]
+    n = n + 1
     c = [1./n]
     return c * n
 
@@ -235,7 +239,7 @@ if __name__ == '__main__':
 
     # random data from metro
     file = 'data/metro_user_4.txt'
-    edges = np.loadtxt(file)
+    edges = np.loadtxt(file, dtype=np.float32)
     print(edges)
     t_end = 1.
     train_edges, test_edges = Split_Train_Test(edges, train_ratio)
