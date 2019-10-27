@@ -77,7 +77,7 @@ class TGGAN:
                  noise_type="Gaussian", learning_rate=0.0003, disc_iters=3, wasserstein_penalty=10,
                  l2_penalty_generator=1e-7, l2_penalty_discriminator=5e-5, temp_start=5.0, min_temperature=0.5,
                  temperature_decay=1 - 5e-5, seed=15, gpu_id=0,
-                 use_gumbel=True, use_wgan=False, use_beta=False, use_decoder=False,
+                 use_gumbel=True, use_wgan=False, use_decoder=False,
                  legacy_generator=False):
         """
         Initialize NetGAN.
@@ -160,7 +160,6 @@ class TGGAN:
             'disc_iters': disc_iters,
             'use_gumbel': use_gumbel,
             'use_decoder': use_decoder,
-            'use_beta': use_beta,
             'use_wgan': use_wgan,
             'legacy_generator': legacy_generator
         }
@@ -171,7 +170,7 @@ class TGGAN:
 
         self.N = N
         self.rw_len = rw_len
-        self.n_length = rw_len
+        self.n_length = rw_len + 1
         self.batch_size = batch_size
         self.noise_dim = self.params['noise_dim']
         self.G_layers = self.params['Generator_Layers']
@@ -629,7 +628,7 @@ class TGGAN:
                         if t0_input is not None: # for evaluation generation
                             t0_res_output = t0_input
                         else:
-                            t0_res_output = self.generate_time_t0(output)
+                            t0_res_output = self.generate_time(output, "t0")
 
                             if self.params['constraint_method'] != "none":
                                 t0_res_output = self.time_constraint(
@@ -649,14 +648,9 @@ class TGGAN:
                         if length_input is not None:
                             max_lengths = length_input
                         else:
-                            if self.rw_len == 1:
-                                max_lengths = tf.zeros(shape=[n_samples, ], dtype=tf.int64)
-                                length_discretes = tf.cast(
-                                    tf.random_uniform(minval=1, maxval=1.5, shape=[n_samples, ]), dtype=tf.int64)
-                            else:
-                                max_lengths = tf.constant(self.rw_len - 1, shape=[n_samples, ], dtype=tf.int64)
-                                max_lengths = tf.one_hot(max_lengths, self.rw_len)
-                                length_discretes = tf.argmax(self.fake_lengths, axis=-1) + 1
+                            max_lengths = tf.constant(self.rw_len, shape=[n_samples, ], dtype=tf.int64)
+                            max_lengths = tf.one_hot(max_lengths, self.n_length)
+                            length_discretes = tf.argmax(max_lengths, axis=-1)
                             self.max_lengths = max_lengths
 
                 # generate temporal edge part
@@ -693,7 +687,7 @@ class TGGAN:
                         if tau_input is not None and i == 1:  # for evaluation generation
                             tau = tau_input
                         else:
-                            tau = self.generate_time_tau(output)
+                            tau = self.generate_time(output, "tau")
 
                             if self.params['constraint_method'] != "none":
                                 tau = self.time_constraint(tau, method=self.params['constraint_method']) * res_time
@@ -733,103 +727,91 @@ class TGGAN:
 
         return t
 
-    def generate_time_t0(self, output):
+    def generate_time(self, output, name):
         n_samples = int(output.shape[0])
-        if self.params['use_decoder']:
-            with tf.name_scope('t0_repara_decoder'):
+        if self.params['use_decoder'] == 'normal':
+            with tf.name_scope('{}_normal_decoder'.format(name)):
                 loc_t0 = output
                 scale_t0 = output
                 for ix, size in enumerate(self.G_t0_up_layers):
                     loc_t0 = tf.layers.dense(loc_t0, size,
-                                             name="Generator.loc_t0_{}".format(ix),
+                                             name="Generator.loc_{}_{}".format(name, ix),
                                              activation=tf.nn.tanh)
                     scale_t0 = tf.layers.dense(scale_t0, size,
-                                               name="Generator.scale_t0_{}".format(ix),
+                                               name="Generator.scale_{}_{}".format(name, ix),
                                                activation=tf.nn.tanh)
-                loc_t0 = tf.layers.dense(loc_t0, 1, name="Generator.loc_t0_last",
+                loc_t0 = tf.layers.dense(loc_t0, 1, name="Generator.loc_{}_last".format(name),
                                          activation=None)
-                scale_t0 = tf.layers.dense(scale_t0, 1, name="Generator.scale_t0_last",
+                scale_t0 = tf.layers.dense(scale_t0, 1, name="Generator.scale_{}_last".format(name),
                                            activation=None)
-                # loc_t0 = tf.clip_by_value(loc_t0, 0, 1)
-                # scale_t0 = tf.clip_by_value(scale_t0, 0, 1)
-                if not self.params['use_beta']:
-                    t0_wait = [tf.truncated_normal([1], mean=loc_t0[i, 0], stddev=scale_t0[i, 0])
-                               for i in range(n_samples)]
-                else:
-                    t0_wait = self.beta_decoder(_alpha_param=loc_t0, _beta_param=scale_t0)
-
+                t0_wait = [tf.truncated_normal([1], mean=loc_t0[i, 0], stddev=scale_t0[i, 0])
+                            for i in range(n_samples)]
                 t0_wait = tf.stack(t0_wait, axis=0)
-        else:
-            with tf.name_scope('t0_deep_decoder'):
+        elif self.params['use_decoder'] == 'gamma':
+            with tf.name_scope('{}_gamma_decoder'.format(name)):
+                loc_t0 = output
+                scale_t0 = output
+                for ix, size in enumerate(self.G_t0_up_layers):
+                    loc_t0 = tf.layers.dense(loc_t0, size,
+                                             name="Generator.loc_{}_{}".format(name, ix),
+                                             activation=tf.nn.tanh)
+                    scale_t0 = tf.layers.dense(scale_t0, size,
+                                               name="Generator.scale_{}_{}".format(name, ix),
+                                               activation=tf.nn.tanh)
+                loc_t0 = tf.layers.dense(loc_t0, 1, name="Generator.loc_{}_last".format(name),
+                                         activation=None)
+                scale_t0 = tf.layers.dense(scale_t0, 1, name="Generator.scale_{}_last".format(name),
+                                           activation=None)
+                t0_wait = self.beta_decoder(_alpha_param=loc_t0, _beta_param=scale_t0)
+                t0_wait = tf.stack(t0_wait, axis=0)
+        elif self.params['use_decoder'] == 'beta':
+            with tf.name_scope('{}_beta_decoder'.format(name)):
+                loc_t0 = output
+                scale_t0 = output
+                for ix, size in enumerate(self.G_t0_up_layers):
+                    loc_t0 = tf.layers.dense(loc_t0, size,
+                                             name="Generator.loc_{}_{}".format(name, ix),
+                                             activation=tf.nn.tanh)
+                    scale_t0 = tf.layers.dense(scale_t0, size,
+                                               name="Generator.scale_{}_{}".format(name, ix),
+                                               activation=tf.nn.tanh)
+                loc_t0 = tf.layers.dense(loc_t0, 1, name="Generator.loc_{}_last".format(name),
+                                         activation=None)
+                scale_t0 = tf.layers.dense(scale_t0, 1, name="Generator.scale_{}_last".format(name),
+                                           activation=None)
+                t0_wait = [tf.random_gamma([1], alpha=loc_t0[i, 0], beta=scale_t0[i, 0])
+                            for i in range(n_samples)]
+                t0_wait = tf.stack(t0_wait, axis=0)
+        elif self.params['use_decoder'] == 'deep':
+            with tf.name_scope('{}_deep_decoder'.format(name)):
                 t0_wait = output
                 for ix, size in enumerate(self.G_t0_up_layers):
                     t0_wait = tf.layers.dense(t0_wait, size,
-                                              name="Generator.t0_up_{}".format(ix),
+                                              name="Generator.{}_up_{}".format(name, ix),
                                               activation=tf.nn.tanh)
                 t0_wait = tf.expand_dims(t0_wait, axis=2)
 
                 # deconvolutional
-                n_strides = 2
+                n_strides = 1
                 t0_wait = tf.nn.conv1d_transpose(
                     t0_wait, filters=self.t0_deconv_filter,
                     output_shape=[n_samples, int(t0_wait.shape[1]) * n_strides,
                                   self.G_t_deconv_output_depth],
                     strides=n_strides, padding='SAME',
-                    name='Generator.t0_deconv')
+                    name='Generator.{}_deconv'.format(name))
 
                 choice = tf.random_uniform([self.G_t_sample_n], maxval=t0_wait.shape[1],
                                            dtype=tf.int64)
                 t0_wait = tf.gather(t0_wait, choice, axis=1)
                 t0_wait = tf.reduce_mean(t0_wait, axis=1)
-                t0_wait = tf.layers.dense(t0_wait, 1, name="Generator.t0_deconv_last",
+                t0_wait = tf.layers.dense(t0_wait, 1, name="Generator.{}_deconv_last".format(name),
                                           activation=None)
-        return t0_wait
-
-    def generate_time_tau(self, output):
-        n_samples = int(output.shape[0])
-        if self.params['use_decoder']:
-            loc = output
-            scale = output
-            for ix, size in enumerate(self.G_tau_up_layers):
-                loc = tf.layers.dense(loc, size, name="Generator.loc_tau_{}".format(ix),
-                                      activation=tf.nn.tanh,
-                                      kernel_initializer=tf.contrib.layers.xavier_initializer())
-                scale = tf.layers.dense(scale, size, name="Generator.scale_tau_{}".format(ix),
-                                        activation=tf.nn.tanh,
-                                        kernel_initializer=tf.contrib.layers.xavier_initializer())
-            loc = tf.layers.dense(loc, 1, name="Generator.loc_tau_last", activation=None)
-            scale = tf.layers.dense(scale, 1, name="Generator.scale_tau_last", activation=None)
-
-            if not self.params['use_beta']:
-                tau = [tf.truncated_normal(
-                    [1], mean=loc[i, 0], stddev=scale[i, 0]) for i in range(n_samples)]
-                tau = tf.stack(tau, axis=0)
-            else:
-                tau = self.beta_decoder(_alpha_param=loc, _beta_param=scale)
         else:
-            tau = output
-            for ix, size in enumerate(self.G_tau_up_layers):
-                tau = tf.layers.dense(tau, size, name="Generator.tau_up_{}".format(ix),
-                                      activation=tf.nn.tanh,
-                                      kernel_initializer=tf.contrib.layers.xavier_initializer())
-            tau = tf.expand_dims(tau, axis=2)
-
-            # deconvolutional
-            n_strides = 2
-            tau = tf.nn.conv1d_transpose(tau, filters=self.tau_deconv_filter,
-                                         output_shape=[n_samples,
-                                                       self.G_tau_up_layers[-1] * n_strides,
-                                                       self.G_t_deconv_output_depth],
-                                         strides=n_strides, padding='SAME',
-                                         name='Generator.tau_deconv')
-
-            choice = tf.random_uniform([self.G_t_sample_n], maxval=tau.shape[1],
-                                       dtype=tf.int64)
-            tau = tf.gather(tau, choice, axis=1)
-            tau = tf.reduce_mean(tau, axis=1)
-            tau = tf.layers.dense(tau, 1, name="Generator.tau_deconv_last",
-                                  activation=None)
-        return tau
+            raise Exception(
+                "reparameterization trick {} not implemented yet. choose from 'normal', 'gamm', 'beta', 'deep'.".format(
+                    self.params['use_decoder']
+                ))
+        return t0_wait
 
     def beta_decoder(self, _alpha_param, _beta_param, B = 5):
         # B is for shape augmentation
@@ -1005,7 +987,7 @@ class TGGAN:
                                feed_dict={self.tf_disc_cost_ph: gen_loss, self.tf_gen_cost_ph: np.mean(_disc_l)})
             summ_writer.add_summary(summ, _it)
 
-            if (_it + 1) % 1000 == 0:
+            if (_it + 1) % 100 == 0:
                 t = time.time() - starting_time
                 log('{:<7}/{:<8} training iterations, took {} seconds so far...'.format(_it+1, max_iters, int(t)))
                 log('gen_loss: {:.4f} disc_loss: {:.4f}'.format(gen_loss, np.mean(_disc_l)))
@@ -1022,301 +1004,313 @@ class TGGAN:
 
                 log('**** Starting Evaluation ****')
 
-                fake_walks = []
-                fake_x_t0 = []
-                real_walks = []
-                real_x_t0 = []
-                for q in range(n_eval_iters):
-                    fake_outputs, node_logit = self.session.run([
-                        sample_many, self.logit], {self.temp: 0.5})
-                    fake_x, fake_t0, fake_edges, fake_t, fake_length = fake_outputs
-                    smpls = None
-                    stop = [False] * n_smpls
-                    for i in range(n_eval_loop):
-                        x, t0, e, tau, le = fake_x[i], fake_t0[i], fake_edges[i], fake_t[i], fake_length[i]
-                        if q == 0:
-                            log('eval_iters: {} eval_loop: {}'.format(q, i))
-                            # log('eval start x logit min: {} max: {}'.format(x_logit.min(), x_logit.max()))
-                            log('eval node logit min: {} max: {}'.format(node_logit.min(), node_logit.max()))
-                            log('generated le: {}'.format(le[:3].reshape(1, -1)[0]))
-                            log('generated x: {}'.format(x[:3].reshape(1, -1)[0]))
-                            log('generated t0: {}'.format(t0[:3].reshape(1, -1)[0]))
-                            log('generated tau: {}'.format(tau[:3].reshape(1, -1)[0]))
-                        if self.rw_len == 1:
-                            if i == 0 :
-                                smpls = np.c_[e, tau[:, :, 0]]
+                try:
+                    fake_walks = []
+                    fake_x_t0 = []
+                    real_walks = []
+                    real_x_t0 = []
+                    for q in range(n_eval_iters):
+                        fake_outputs, node_logit = self.session.run([
+                            sample_many, self.logit], {self.temp: 0.5})
+                        fake_x, fake_t0, fake_edges, fake_t, fake_length = fake_outputs
+                        smpls = None
+                        stop = [False] * n_smpls
+                        for i in range(n_eval_loop):
+                            x, t0, e, tau, le = fake_x[i], fake_t0[i], fake_edges[i], fake_t[i], fake_length[i]
+                            if q == 0:
+                                log('eval_iters: {} eval_loop: {}'.format(q, i))
+                                log('eval node logit min: {} max: {}'.format(node_logit.min(), node_logit.max()))
+                                log('generated [le, x, t0, tau, len]\n[{}, {}, {}, {}, {}]'.format(
+                                    le[0], x[0], t0[0, 0], tau[0, :, 0], le[0]
+                                ))
+                                log('generated [le, x, t0, tau, len]\n[{}, {}, {}, {}, {}]'.format(
+                                    le[1], x[1], t0[1, 0], tau[1, :, 0], le[1]
+                                ))
+                            if self.rw_len == 1:
+                                if i == 0:
+                                    smpls = np.c_[e, tau[:, :, 0]]
+                                else:
+                                    smpls = np.c_[smpls, e, tau[:, :, 0]]
+
+                                for b in range(n_smpls):
+                                    b_le = le[b]
+                                    if i == 0 and b_le == 0:
+                                        smpls[b, (i + b_le) * 3:] = -1
+                                        stop[b] = True
+
+                                    start = i * 3
+                                    if i > 0 and stop[b]:
+                                        smpls[b, start: start + 3] = -1
+                                    if i > 0 and not stop[b] and b_le == 0:
+                                        smpls[b, start: start + 3] = -1
+                                        stop[b] = True
                             else:
-                                smpls = np.c_[smpls, e, tau[:, :, 0]]
+                                for j in range(self.rw_len):
+                                    if i == 0 and j == 0:
+                                        smpls = np.c_[e[:, j * 2:(j + 1) * 2], tau[:, :1, 0]]
+                                    if i == 0 and j > 0:
+                                        smpls = np.c_[smpls, e[:, j * 2: (j + 1) * 2], tau[:, :1, 0]]
+                                    if i > 0 and j > 0:  # ignore the first edge since it repeats last eval_loop
+                                        smpls = np.c_[smpls, e[:, j * 2: (j + 1) * 2], tau[:, :1, 0]]
+                                # judge if reach max length
+                                for b in range(n_smpls):
+                                    b_le = le[b]
+                                    if i == 0 and b_le < self.rw_len:  # end
+                                        smpls[b, (i * self.rw_len + b_le) * 3:] = -1
+                                        stop[b] = True
 
-                            for b in range(n_smpls):
-                                b_le = le[b]
-                                if i == 0 and b_le == 0:
-                                    smpls[b, (i + b_le) * 3:] = -1
-                                    stop[b] = True
+                                    start = i * self.rw_len - i + 1
+                                    if i > 0 and not stop[b] and b_le <= 1:  # end
+                                        smpls[b, start * 3: (start + self.rw_len - 1) * 3] = -1
+                                        stop[b] = True
+                                    if i > 0 and not stop[b] and b_le > 1 and b_le < self.rw_len:
+                                        smpls[b, (start + b_le) * 3:] = -1
+                                        stop[b] = True
+                                    if i > 0 and stop[b]:
+                                        smpls[b, start * 3: (start + self.rw_len - 1) * 3] = -1
 
-                                start = i * 3
-                                if i > 0 and stop[b]:
-                                    smpls[b, start : start + 3] = -1
-                                if i > 0 and not stop[b] and b_le == 0:
-                                    smpls[b, start : start + 3] = -1
-                                    stop[b] = True
-                        else:
-                            for j in range(self.rw_len):
-                                if i == 0 and j == 0:
-                                    smpls = np.c_[e[:, j * 2:(j + 1) * 2], tau[:, :1, 0]]
-                                if i == 0 and j > 0:
-                                    smpls = np.c_[smpls, e[:, j * 2: (j + 1) * 2], tau[:, :1, 0]]
-                                if i > 0 and j > 0:  # ignore the first edge since it repeats last eval_loop
-                                    smpls = np.c_[smpls, e[:, j * 2: (j + 1) * 2], tau[:, :1, 0]]
-                            # judge if reach max length
-                            for b in range(n_smpls):
-                                b_le = le[b]
-                                if i == 0 and b_le < self.rw_len:  # end
-                                    smpls[b, (i * self.rw_len + b_le) * 3:] = -1
-                                    stop[b] = True
+                        fake_x = np.array(fake_x).reshape(-1, 1)
+                        fake_t0 = np.array(fake_t0).reshape(-1, 1)
+                        fake_len = np.array(fake_length).reshape(-1, 1)
+                        fake_start = np.c_[fake_x, fake_t0, fake_len]
+                        fake_x_t0.append(fake_start)
+                        fake_walks.append(smpls)
 
-                                start = i * self.rw_len - i + 1
-                                if i > 0 and not stop[b] and b_le <= 1:  # end
-                                    smpls[b, start * 3: (start + self.rw_len - 1) * 3] = -1
-                                    stop[b] = True
-                                if i > 0 and not stop[b] and b_le > 1 and b_le < self.rw_len:
-                                    smpls[b, (start + b_le) * 3:] = -1
-                                    stop[b] = True
-                                if i > 0 and stop[b]:
-                                    smpls[b, start * 3: (start + self.rw_len - 1) * 3] = -1
+                    for _ in range(eval_transitions // self.batch_size):
+                        real_x, real_t0, real_edge, real_tau, real_length \
+                            = self.session.run([
+                            self.real_x_input_discretes, self.real_t0_res_inputs,
+                            self.real_edge_inputs_discrete, self.real_tau_inputs,
+                            self.real_length_discretes
+                        ], feed_dict={self.temp: 0.5})
 
-                    fake_x = np.array(fake_x).reshape(-1, 1)
-                    fake_t0 = np.array(fake_t0).reshape(-1, 1)
-                    fake_len = np.array(fake_t0).reshape(-1, 1)
-                    fake_start = np.c_[fake_x, fake_t0, fake_len]
-                    fake_x_t0.append(fake_start)
-                    fake_walks.append(smpls)
+                        walk = np.c_[real_edge.reshape(-1, 2), real_tau.reshape(-1, 1)]
+                        real_walks.append(walk)
+                        real_start = np.stack([real_x, real_t0[:, 0], real_length], axis=1)
+                        real_x_t0.append(real_start)
 
-                for _ in range(eval_transitions // self.batch_size):
-                    real_x, real_t0, real_edge, real_tau, real_length \
-                    = self.session.run([
-                        self.real_x_input_discretes, self.real_t0_res_inputs,
-                        self.real_edge_inputs_discrete, self.real_tau_inputs,
-                        self.real_length_discretes
-                    ], feed_dict={self.temp: 0.5})
+                    if self.rw_len == 1:
+                        seq_len = 3 * n_eval_loop
+                        fake_graphs = np.array(fake_walks).reshape(-1, seq_len)
+                    else:
+                        seq_len = 3 * (self.rw_len * n_eval_loop - n_eval_loop + 1)
+                        fake_graphs = np.array(fake_walks).reshape(-1, seq_len)
 
-                    walk = np.c_[real_edge.reshape(-1, 2), real_tau.reshape(-1, 1)]
-                    real_walks.append(walk)
-                    real_start = np.stack([real_x, real_t0[:, 0], real_length], axis=1)
-                    real_x_t0.append(real_start)
+                    fake_walks = fake_graphs.reshape(-1, 3)
+                    fake_mask = fake_walks[:, 0] > -1
+                    fake_walks = fake_walks[fake_mask]
+                    fake_x_t0 = np.array(fake_x_t0).reshape(-1, 3)
 
-                if self.rw_len == 1:
-                    seq_len = 3 * n_eval_loop
-                    fake_graphs = np.array(fake_walks).reshape(-1, seq_len)
-                else:
-                    seq_len = 3 * (self.rw_len * n_eval_loop - n_eval_loop + 1)
-                    fake_graphs = np.array(fake_walks).reshape(-1, seq_len)
+                    real_walks = np.array(real_walks).reshape(-1, 3)
+                    real_mask = real_walks[:, 0] > -1
+                    real_walks = real_walks[real_mask]
+                    real_x_t0 = np.array(real_x_t0).reshape(-1, 3)
 
-                fake_walks = fake_graphs.reshape(-1, 3)
-                fake_mask = fake_walks[:, 0] > -1
-                fake_walks = fake_walks[fake_mask]
-                fake_x_t0 = np.array(fake_x_t0).reshape(-1, 3)
+                    # truth_train_walks = train_edges[:, 1:3]
+                    truth_train_time = train_edges[:, 3:]
+                    truth_train_res_time = self.params['t_end'] - truth_train_time
+                    truth_train_walks = np.concatenate([train_edges[:, 1:3], truth_train_res_time], axis=1)
+                    truth_train_x_t0 = np.c_[np.zeros((len(train_edges), 1)), truth_train_res_time]
+                    truth_train_x_t0 = np.r_[truth_train_x_t0, np.ones((len(train_edges), 2))]
 
-                real_walks = np.array(real_walks).reshape(-1, 3)
-                real_mask = real_walks[:, 0] > -1
-                real_walks = real_walks[real_mask]
-                real_x_t0 = np.array(real_x_t0).reshape(-1, 3)
+                    truth_test_time = test_edges[:, 3:]
+                    truth_test_res_time = self.params['t_end'] - truth_test_time
+                    truth_test_walks = np.c_[test_edges[:, 1:3], truth_test_res_time]
+                    truth_test_x_t0 = np.c_[np.zeros((len(test_edges), 1)), truth_test_res_time]
+                    truth_test_x_t0 = np.r_[truth_test_x_t0, np.ones((len(test_edges), 2))]
 
-                # truth_train_walks = train_edges[:, 1:3]
-                truth_train_time = train_edges[:, 3:]
-                truth_train_res_time = self.params['t_end'] - truth_train_time
-                truth_train_walks = np.concatenate([train_edges[:, 1:3], truth_train_res_time], axis=1)
-                truth_train_x_t0 = np.array(real_x_t0).reshape(-1, 2)
+                    # plot edges time series for qualitative evaluation
+                    fake_e_list, fake_e_counts = np.unique(fake_walks[:, 0:2], return_counts=True, axis=0)
+                    real_e_list, real_e_counts = np.unique(real_walks[:, 0:2], return_counts=True, axis=0)
+                    truth_train_e_list, truth_train_e_counts = np.unique(truth_train_walks[:, 0:2], return_counts=True,
+                                                                         axis=0)
+                    truth_test_e_list, truth_test_e_counts = np.unique(truth_test_walks[:, 0:2], return_counts=True,
+                                                                       axis=0)
+                    truth_e_list, truth_e_counts = np.unique(
+                        np.r_[truth_test_walks[:, 0:2], truth_test_walks[:, 0:2]], return_counts=True, axis=0)
+                    n_e = len(truth_e_list)
 
-                truth_test_time = test_edges[:, 3:]
-                truth_test_res_time = self.params['t_end'] - truth_test_time
-                truth_test_walks = np.c_[test_edges[:, 1:3], truth_test_res_time]
-                truth_test_x_t0 = np.array(real_x_t0).reshape(-1, 2)
-                # print('fake_walks: \n{} \nreal_walks: \n{}'.format(fake_walks, real_walks))
+                    real_x_list, real_x_counts = np.unique(real_x_t0[:, 0], return_counts=True)
+                    fake_x_list, fake_x_counts = np.unique(fake_x_t0[:, 0], return_counts=True)
+                    truth_x_list, truth_x_counts = real_x_list, real_x_counts
 
-                # plot edges time series for qualitative evaluation
-                fake_e_list, fake_e_counts = np.unique(fake_walks[:, 0:2], return_counts=True, axis=0)
-                real_e_list, real_e_counts = np.unique(real_walks[:, 0:2], return_counts=True, axis=0)
-                truth_train_e_list, truth_train_e_counts = np.unique(truth_train_walks[:, 0:2], return_counts=True,
-                                                                     axis=0)
-                truth_test_e_list, truth_test_e_counts = np.unique(truth_test_walks[:, 0:2], return_counts=True, axis=0)
-                truth_e_list, truth_e_counts = np.unique(
-                    np.r_[truth_test_walks[:, 0:2], truth_test_walks[:, 0:2]], return_counts=True, axis=0)
-                n_e = len(truth_e_list)
+                    real_len_list, real_len_counts = np.unique(real_x_t0[:, 2], return_counts=True)
+                    fake_len_list, fake_len_counts = np.unique(fake_x_t0[:, 2], return_counts=True)
+                    truth_len_list, truth_len_counts = real_len_list, real_len_counts
 
-                real_x_list, real_x_counts = np.unique(real_x_t0[:, 0], return_counts=True)
-                fake_x_list, fake_x_counts = np.unique(fake_x_t0[:, 0], return_counts=True)
-                truth_x_list, truth_x_counts = real_x_list, real_x_counts
+                    fig = plt.figure(figsize=(2 * 9, 2 * 9))
+                    fig.suptitle('Truth, Real, and Fake edges comparisons')
+                    dx = 0.3
+                    dy = dx
+                    zpos = 0
 
-                real_len_list, real_len_counts = np.unique(real_x_t0[:, 2], return_counts=True)
-                fake_len_list, fake_len_counts = np.unique(fake_x_t0[:, 2], return_counts=True)
-                truth_len_list, truth_len_counts = real_len_list, real_len_counts
+                    fake_ax = fig.add_subplot(221, projection='3d')
+                    fake_ax.bar3d(fake_e_list[:, 0], fake_e_list[:, 1], zpos, dx, dy, fake_e_counts)
+                    fake_ax.set_xlim([0, self.N])
+                    fake_ax.set_ylim([0, self.N])
+                    fake_ax.set_xticks(range(self.N))
+                    fake_ax.set_yticks(range(self.N))
+                    fake_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
+                    fake_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
+                    fake_ax.set_title('fake edges number: {}'.format(len(fake_e_list)))
 
-                fig = plt.figure(figsize=(2 * 9, 2 * 9))
-                fig.suptitle('Truth, Real, and Fake edges comparisons')
-                dx = 0.3
-                dy = dx
-                zpos = 0
+                    real_ax = fig.add_subplot(222, projection='3d')
+                    real_ax.bar3d(real_e_list[:, 0], real_e_list[:, 1], zpos, dx, dy, real_e_counts)
+                    real_ax.set_xlim([0, self.N])
+                    real_ax.set_ylim([0, self.N])
+                    real_ax.set_xticks(range(self.N))
+                    real_ax.set_yticks(range(self.N))
+                    real_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
+                    real_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
+                    real_ax.set_title('real edges number: {}'.format(len(real_e_list)))
 
-                fake_ax = fig.add_subplot(221, projection='3d')
-                fake_ax.bar3d(fake_e_list[:, 0], fake_e_list[:, 1], zpos, dx, dy, fake_e_counts)
-                fake_ax.set_xlim([0, self.N])
-                fake_ax.set_ylim([0, self.N])
-                fake_ax.set_xticks(range(self.N))
-                fake_ax.set_yticks(range(self.N))
-                fake_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
-                fake_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
-                fake_ax.set_title('fake edges number: {}'.format(len(fake_e_list)))
+                    truth_ax = fig.add_subplot(223, projection='3d')
+                    truth_ax.bar3d(truth_train_e_list[:, 0], truth_train_e_list[:, 1], zpos, dx, dy,
+                                   truth_train_e_counts)
+                    truth_ax.set_xlim([0, self.N])
+                    truth_ax.set_ylim([0, self.N])
+                    truth_ax.set_xticks(range(self.N))
+                    truth_ax.set_yticks(range(self.N))
+                    truth_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
+                    truth_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
+                    truth_ax.set_title('truth train edges number: {}'.format(len(truth_train_e_list)))
 
-                real_ax = fig.add_subplot(222, projection='3d')
-                real_ax.bar3d(real_e_list[:, 0], real_e_list[:, 1], zpos, dx, dy, real_e_counts)
-                real_ax.set_xlim([0, self.N])
-                real_ax.set_ylim([0, self.N])
-                real_ax.set_xticks(range(self.N))
-                real_ax.set_yticks(range(self.N))
-                real_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
-                real_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
-                real_ax.set_title('real edges number: {}'.format(len(real_e_list)))
+                    truth_ax = fig.add_subplot(222, projection='3d')
+                    truth_ax.bar3d(truth_test_e_list[:, 0], truth_test_e_list[:, 1], zpos, dx, dy, truth_test_e_counts)
+                    truth_ax.set_xlim([0, self.N])
+                    truth_ax.set_ylim([0, self.N])
+                    truth_ax.set_xticks(range(self.N))
+                    truth_ax.set_yticks(range(self.N))
+                    truth_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
+                    truth_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
+                    truth_ax.set_title('truth test edges number: {}'.format(len(truth_test_e_list)))
 
-                truth_ax = fig.add_subplot(223, projection='3d')
-                truth_ax.bar3d(truth_train_e_list[:, 0], truth_train_e_list[:, 1], zpos, dx, dy, truth_train_e_counts)
-                truth_ax.set_xlim([0, self.N])
-                truth_ax.set_ylim([0, self.N])
-                truth_ax.set_xticks(range(self.N))
-                truth_ax.set_yticks(range(self.N))
-                truth_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
-                truth_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
-                truth_ax.set_title('truth train edges number: {}'.format(len(truth_train_e_list)))
+                    plt.tight_layout()
+                    plt.savefig('{}/iter_{}_edges_counts_validation.png'.format(output_directory, _it + 1), dpi=90)
+                    plt.close()
 
-                truth_ax = fig.add_subplot(222, projection='3d')
-                truth_ax.bar3d(truth_test_e_list[:, 0], truth_test_e_list[:, 1], zpos, dx, dy, truth_test_e_counts)
-                truth_ax.set_xlim([0, self.N])
-                truth_ax.set_ylim([0, self.N])
-                truth_ax.set_xticks(range(self.N))
-                truth_ax.set_yticks(range(self.N))
-                truth_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
-                truth_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
-                truth_ax.set_title('truth test edges number: {}'.format(len(truth_test_e_list)))
+                    fig, ax = plt.subplots(n_e + 4, 4, figsize=(4 * 6, (n_e + 4) * 4))
+                    i = 0
+                    real_ax = ax[i, 0]
+                    real_ax.bar(real_x_list, real_x_counts)
+                    real_ax.set_xlim([-1, 2])
+                    real_ax.set_title('real start x number: {}'.format(len(real_x_list)))
 
-                plt.tight_layout()
-                plt.savefig('{}/iter_{}_edges_counts_validation.png'.format(output_directory, _it + 1), dpi=90)
-                plt.close()
+                    fake_ax = ax[i, 1]
+                    fake_ax.bar(fake_x_list, fake_x_counts)
+                    fake_ax.set_xlim([-1, 2])
+                    fake_ax.set_title('fake start x number: {}'.format(len(fake_x_list)))
 
-                fig, ax = plt.subplots(n_e + 4, 4, figsize=(4 * 6, (n_e + 4) * 4))
-                i = 0
-                real_ax = ax[i, 0]
-                real_ax.bar(real_x_list, real_x_counts)
-                real_ax.set_xlim([-1, 2])
-                real_ax.set_title('real start x number: {}'.format(len(real_x_list)))
+                    truth_ax = ax[i, 2]
+                    truth_ax.bar(truth_x_list, truth_x_counts)
+                    truth_ax.set_xlim([-1, 2])
+                    truth_ax.set_title('truth start x number: {}'.format(len(truth_x_list)))
+                    truth_ax = ax[i, 3]
+                    truth_ax.bar(truth_x_list, truth_x_counts)
+                    truth_ax.set_xlim([-1, 2])
+                    truth_ax.set_title('truth start x number: {}'.format(len(truth_x_list)))
 
-                fake_ax = ax[i, 1]
-                fake_ax.bar(fake_x_list, fake_x_counts)
-                fake_ax.set_xlim([-1, 2])
-                fake_ax.set_title('fake start x number: {}'.format(len(fake_x_list)))
+                    i = 1
+                    max_xlim = max(max(real_len_list), max(fake_len_list)) + 1
+                    min_xlim = min(min(real_len_list), min(fake_len_list)) - 1
+                    real_ax = ax[i, 0]
+                    real_ax.bar(real_len_list, real_len_counts)
+                    real_ax.set_xlim([min_xlim, max_xlim])
+                    real_ax.set_title('real sampler lengths: {}'.format(len(real_len_list)))
 
-                truth_ax = ax[i, 2]
-                truth_ax.bar(truth_x_list, truth_x_counts)
-                truth_ax.set_xlim([-1, 2])
-                truth_ax.set_title('truth start x number: {}'.format(len(truth_x_list)))
-                truth_ax = ax[i, 3]
-                truth_ax.bar(truth_x_list, truth_x_counts)
-                truth_ax.set_xlim([-1, 2])
-                truth_ax.set_title('truth start x number: {}'.format(len(truth_x_list)))
+                    fake_ax = ax[i, 1]
+                    fake_ax.bar(fake_len_list, fake_len_counts)
+                    fake_ax.set_xlim([min_xlim, max_xlim])
+                    fake_ax.set_title('fake sampler lengths: {}'.format(len(fake_len_list)))
 
-                i = 1
-                real_ax = ax[i, 0]
-                real_ax.bar(real_len_list, real_len_counts)
-                real_ax.set_xlim([-1, 2])
-                real_ax.set_title('real sampler lengths: {}'.format(len(real_len_list)))
+                    truth_ax = ax[i, 2]
+                    truth_ax.bar(truth_len_list, truth_len_counts)
+                    truth_ax.set_xlim([min_xlim, max_xlim])
+                    truth_ax.set_title('truth sampler lengths: {}'.format(len(truth_len_list)))
+                    truth_ax = ax[i, 3]
+                    truth_ax.bar(truth_len_list, truth_len_counts)
+                    truth_ax.set_xlim([min_xlim, max_xlim])
+                    truth_ax.set_title('truth sampler lengths: {}'.format(len(truth_len_list)))
 
-                fake_ax = ax[i, 1]
-                fake_ax.bar(fake_len_list, fake_len_counts)
-                fake_ax.set_xlim([-1, 2])
-                fake_ax.set_title('fake sampler lengths: {}'.format(len(fake_len_list)))
+                    i = 2
+                    for j, e in enumerate([0, 1]):
+                        real_ax = ax[i + j, 0]
+                        real_mask = real_x_t0[:, 0] == e
+                        real_times = real_x_t0[real_mask][:, 1]
+                        real_ax.hist(real_times, range=[0, 1], bins=100)
+                        real_ax.set_title('real x node: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                            int(e), real_times.mean(), real_times.std()))
 
-                truth_ax = ax[i, 2]
-                truth_ax.bar(truth_len_list, truth_len_counts)
-                truth_ax.set_xlim([-1, 2])
-                truth_ax.set_title('truth sampler lengths: {}'.format(len(truth_len_list)))
-                truth_ax = ax[i, 3]
-                truth_ax.bar(truth_len_list, truth_len_counts)
-                truth_ax.set_xlim([-1, 2])
-                truth_ax.set_title('truth sampler lengths: {}'.format(len(truth_len_list)))
+                        fake_ax = ax[i + j, 1]
+                        fake_mask = fake_x_t0[:, 0] == e
+                        fake_times = fake_x_t0[fake_mask][:, 1]
+                        fake_ax.hist(fake_times, range=[0, 1], bins=100)
+                        fake_ax.set_title('fake x node: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                            int(e), fake_times.mean(), fake_times.std()))
 
-                i = 2
-                for j, e in enumerate([0, 1]):
-                    real_ax = ax[i + j, 0]
-                    real_mask = real_x_t0[:, 0] == e
-                    real_times = real_x_t0[real_mask][:, 1]
-                    real_ax.hist(real_times, range=[0, 1], bins=100)
-                    real_ax.set_title('real x node: {} loc: {:.4f} scale: {:.4f}'.format(
-                        int(e), real_times.mean(), real_times.std()))
+                        truth_ax = ax[i + j, 2]
+                        truth_train_mask = truth_train_x_t0[:, 0] == e
+                        truth_train_times = truth_train_x_t0[truth_train_mask][:, 1]
+                        truth_ax.hist(truth_train_times, range=[0, 1], bins=100)
+                        truth_ax.set_title('truth train x node: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                            int(e), truth_train_times.mean(), truth_train_times.std()))
+                        truth_ax = ax[i + j, 3]
+                        truth_test_mask = truth_test_x_t0[:, 0] == e
+                        truth_test_times = truth_test_x_t0[truth_test_mask][:, 1]
+                        truth_ax.hist(truth_test_times, range=[0, 1], bins=100)
+                        truth_ax.set_title('truth test x node: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                            int(e), truth_test_times.mean(), truth_test_times.std()))
 
-                    fake_ax = ax[i + j, 1]
-                    fake_mask = fake_x_t0[:, 0] == e
-                    fake_times = fake_x_t0[fake_mask][:, 1]
-                    fake_ax.hist(fake_times, range=[0, 1], bins=100)
-                    fake_ax.set_title('fake x node: {} loc: {:.4f} scale: {:.4f}'.format(
-                        int(e), fake_times.mean(), fake_times.std()))
+                    i = 4
+                    for j, e in enumerate(truth_e_list):
+                        real_ax = ax[i + j, 0]
+                        real_mask = np.logical_and(real_walks[:, 0] == e[0], real_walks[:, 1] == e[1])
+                        real_times = real_walks[real_mask][:, 2]
+                        real_ax.hist(real_times, range=[0, 1], bins=100)
+                        real_ax.set_title('real start edge: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                            [int(v) for v in e], real_times.mean(), real_times.std()))
 
-                    truth_ax = ax[i + j, 2]
-                    truth_train_mask = truth_train_x_t0[:, 0] == e
-                    truth_train_times = truth_train_x_t0[truth_train_mask][:, 1]
-                    truth_ax.hist(truth_train_times, range=[0, 1], bins=100)
-                    truth_ax.set_title('truth x node: {} loc: {:.4f} scale: {:.4f}'.format(
-                        int(e), truth_train_times.mean(), truth_train_times.std()))
-                    truth_ax = ax[i + j, 3]
-                    truth_train_mask = truth_train_x_t0[:, 0] == e
-                    truth_train_times = truth_train_x_t0[truth_train_mask][:, 1]
-                    truth_ax.hist(truth_train_times, range=[0, 1], bins=100)
-                    truth_ax.set_title('truth x node: {} loc: {:.4f} scale: {:.4f}'.format(
-                        int(e), truth_train_times.mean(), truth_train_times.std()))
+                        fake_ax = ax[i + j, 1]
+                        fake_mask = np.logical_and(fake_walks[:, 0] == e[0], fake_walks[:, 1] == e[1])
+                        fake_times = fake_walks[fake_mask][:, 2]
+                        fake_ax.hist(fake_times, range=[0, 1], bins=100)
+                        fake_ax.set_title('fake start edge: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                            [int(v) for v in e], fake_times.mean(), fake_times.std()))
 
-                i = 4
-                for j, e in enumerate(truth_e_list):
-                    real_ax = ax[i + j, 0]
-                    real_mask = np.logical_and(real_walks[:, 0] == e[0], real_walks[:, 1] == e[1])
-                    real_times = real_walks[real_mask][:, 2]
-                    real_ax.hist(real_times, range=[0, 1], bins=100)
-                    real_ax.set_title('real start edge: {} loc: {:.4f} scale: {:.4f}'.format(
-                        [int(v) for v in e], real_times.mean(), real_times.std()))
+                        truth_train_ax = ax[i + j, 2]
+                        truth_train_mask = np.logical_and(truth_train_walks[:, 0] == e[0],
+                                                          truth_train_walks[:, 1] == e[1])
+                        truth_train_times = truth_train_walks[truth_train_mask][:, 2]
+                        truth_train_ax.hist(truth_train_times, range=[0, 1], bins=100)
+                        truth_train_ax.set_title(
+                            'truth train start edge: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                                [int(v) for v in e], truth_train_times.mean(), truth_train_times.std()))
 
-                    fake_ax = ax[i + j, 1]
-                    fake_mask = np.logical_and(fake_walks[:, 0] == e[0], fake_walks[:, 1] == e[1])
-                    fake_times = fake_walks[fake_mask][:, 2]
-                    fake_ax.hist(fake_times, range=[0, 1], bins=100)
-                    fake_ax.set_title('fake start edge: {} loc: {:.4f} scale: {:.4f}'.format(
-                        [int(v) for v in e], fake_times.mean(), fake_times.std()))
+                        truth_test_ax = ax[i + j, 3]
+                        truth_test_mask = np.logical_and(truth_test_walks[:, 0] == e[0], truth_test_walks[:, 1] == e[1])
+                        truth_test_times = truth_test_walks[truth_test_mask][:, 2]
+                        truth_test_ax.hist(truth_test_times, range=[0, 1], bins=100)
+                        truth_test_ax.set_title(
+                            'truth test start edge: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                                [int(v) for v in e], truth_test_times.mean(), truth_test_times.std()))
 
-                    truth_train_ax = ax[i + j, 2]
-                    truth_train_mask = np.logical_and(truth_train_walks[:, 0] == e[0], truth_train_walks[:, 1] == e[1])
-                    truth_train_times = truth_train_walks[truth_train_mask][:, 2]
-                    truth_train_ax.hist(truth_train_times, range=[0, 1], bins=100)
-                    truth_train_ax.set_title('truth train start edge: {} loc: {:.4f} scale: {:.4f}'.format(
-                        [int(v) for v in e], truth_train_times.mean(), truth_train_times.std()))
-
-                    truth_test_ax = ax[i + j, 3]
-                    truth_test_mask = np.logical_and(truth_test_walks[:, 0] == e[0], truth_test_walks[:, 1] == e[1])
-                    truth_test_times = truth_test_walks[truth_test_mask][:, 2]
-                    truth_test_ax.hist(truth_test_times, range=[0, 1], bins=100)
-                    truth_test_ax.set_title('truth test start edge: {} loc: {:.4f} scale: {:.4f}'.format(
-                        [int(v) for v in e], truth_test_times.mean(), truth_test_times.std()))
-
-                plt.tight_layout()
-                plt.savefig('{}/iter_{}_validation.png'.format(output_directory, _it + 1))
-                plt.close()
-                fake_graph_file = "{}/{}_assembled_graph_iter_{}.npz".format(output_directory, timestr, _it + 1)
-                np.savez_compressed(fake_graph_file, fake_graphs=fake_graphs, real_walks=real_walks)
-                fake_loss_file = "{}/{}_training_loss_iter_{}.npz".format(output_directory, timestr, _it + 1)
-                np.savez_compressed(fake_loss_file, disc_losses=disc_losses, gen_losses=gen_losses)
-                log('assembled graph to file: {} \nas array\n {}\n with shape: {}'.format(
-                    fake_graph_file, fake_graphs[:2, :], fake_graphs.shape))
-                save_file = "{}/{}_iter_{}.ckpt".format(save_directory, model_name, _it + 1)
-                d = saver.save(self.session, save_file)
-                log("**** Saving snapshots into {} ****".format(save_file))
-                # except ValueError as e:
-                #     print("error: \n{}".format(e))
-                #     log('**** plotting function got error, continue training...')
+                    plt.tight_layout()
+                    plt.savefig('{}/iter_{}_validation.png'.format(output_directory, _it + 1))
+                    plt.close()
+                    fake_graph_file = "{}/{}_assembled_graph_iter_{}.npz".format(output_directory, timestr, _it + 1)
+                    np.savez_compressed(fake_graph_file, fake_graphs=fake_graphs, real_walks=real_walks)
+                    fake_loss_file = "{}/{}_training_loss_iter_{}.npz".format(output_directory, timestr, _it + 1)
+                    np.savez_compressed(fake_loss_file, disc_losses=disc_losses, gen_losses=gen_losses)
+                    log('assembled graph to file: {} \nas array\n {}\n with shape: {}'.format(
+                        fake_graph_file, list(fake_graphs[:2, :]), fake_graphs.shape
+                    ))
+                    save_file = "{}/{}_iter_{}.ckpt".format(save_directory, model_name, _it + 1)
+                    d = saver.save(self.session, save_file)
+                    log("**** Saving snapshots into {} ****".format(save_file))
+                except ValueError as e:
+                    print(e)
+                    log('reshape fake walks got error. Fake walks: {}'.format(fake_walks))
+                    continue
                 t = time.time() - starting_time
                 log('**** end evaluation **** took {} seconds so far...'.format(int(t)))
 
@@ -1329,6 +1323,7 @@ class TGGAN:
                         plt.plot(disc_losses, label="Critic loss")
                         plt.plot(gen_losses, label="Generator loss")
                     plt.legend()
+                    plt.tight_layout()
                     plt.savefig('{}/iter_{}_loss_res_final.png'.format(output_directory, _it + 1))
                     plt.close()
                 except:
@@ -1466,6 +1461,7 @@ if __name__ == '__main__':
                     temp_start=5,
                     learning_rate=lr,
                     use_wgan=True,
+                  use_decoder=False,
                     constraint_method='min_max',
                     # momentum=0.9
             )
@@ -1509,9 +1505,9 @@ if __name__ == '__main__':
     # print('disc_real:\n', disc_real)
     # print('disc_fake:\n', disc_fake)
 
-    max_iters = 10
-    eval_every = 5
-    plot_every = 5
+    max_iters = 100000
+    eval_every = 1000
+    plot_every = 1000
     n_eval_loop = 2
     transitions_per_iter = batch_size * n_eval_loop
     eval_transitions = transitions_per_iter * 100

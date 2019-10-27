@@ -53,12 +53,10 @@ def main(args):
         lr = args.learningrate
         continue_training = args.continueTraining
         use_wgan = args.use_wgan
-        use_beta = args.use_beta
         use_decoder = args.use_decoder
         constraint_method = args.constraint_method
         print('****** use wgan:', use_wgan)
         print('****** use decoder:', use_decoder)
-        print('****** use beta:', use_beta)
         print('****** use constraint_method:', constraint_method)
 
         # random data from metro
@@ -89,7 +87,6 @@ def main(args):
                       learning_rate=lr,
                       use_gumbel=True,
                       use_wgan=use_wgan,
-                      use_beta=use_beta,
                       use_decoder=use_decoder,
                       constraint_method=constraint_method,
                       )
@@ -135,13 +132,14 @@ def main(args):
         lr = args.learningrate
         continue_training = args.continueTraining
         use_wgan = args.use_wgan
-        use_beta = args.use_beta
         use_decoder = args.use_decoder
         constraint_method = args.constraint_method
         time_deconv = args.time_deconv
         time_sample_num = args.time_sample_num
         n_eval_loop = args.n_eval_loop
-
+        print('****** use wgan:', use_wgan)
+        print('****** use decoder:', use_decoder)
+        print('****** use constraint_method:', constraint_method)
 
         # random data from metro
         userid = args.userid
@@ -172,7 +170,6 @@ def main(args):
                       learning_rate=lr,
                       use_gumbel=True,
                       use_wgan=use_wgan,
-                      use_beta=use_beta,
                       use_decoder=use_decoder,
                       constraint_method=constraint_method,
                       )
@@ -212,9 +209,9 @@ if __name__ == '__main__':
     datasets = ['simulation', 'metro', 'auth']
     parser.add_argument("-d", "--dataset", default="metro", type=str,
                         help="one of: {}".format(", ".join(sorted(datasets))))
-    parser.add_argument("-ui", "--userid", default=0, type=int,
+    parser.add_argument("-ui", "--userid", default=4, type=int,
                         help="one of: {}".format(", ".join(sorted(datasets))))
-    parser.add_argument("-f", "--file", default="data/auth_user_0.txt", type=str,
+    parser.add_argument("-f", "--file", default="data/metro_user_4.txt", type=str,
                         help="file path of data in format [[d, i, j, t], ...]")
     processes = ['rand_binomial', 'rand_poisson']
     parser.add_argument("-sp", "--simProcess", default="rand_binomial", type=str,
@@ -226,28 +223,25 @@ if __name__ == '__main__':
     parser.add_argument("-nt", "--numberTime", default=10, type=int,
                         help="this is the number of time slices for both real data and simulation data")
 
-    # DeepTemporalWalk
     parser.add_argument("-sc", "--scale", default=0.1, type=float,
                         help="scale of gaussian prior for kernel density estimation in DeepTemporalWalk")
-    parser.add_argument("-rl", "--rw_len", default=1, type=int,
-                        help="random walks maximum length in DeepTemporalWalk")
+
+    # DeepTemporalWalk
     parser.add_argument("-bs", "--batch_size", default=32, type=int,
                         help="random walks batch size in DeepTemporalWalk")
-
-    # hyperparameter for GAN
-    parser.add_argument("-lr", "--learningrate", default=0.00003, type=float,
+    parser.add_argument("-lr", "--learningrate", default=0.0003, type=float,
                         help="if this run should run all evaluations")
-    parser.add_argument("-uw", "--use_wgan", default=False, type=bool,
+    parser.add_argument("-rl", "--rw_len", default=1, type=int,
+                        help="random walks maximum length in DeepTemporalWalk")
+    parser.add_argument("-uw", "--use_wgan", default=True, type=bool,
                         help="if use WGAN loss function")
-    parser.add_argument("-ud", "--use_decoder", default=False, type=bool,
+    parser.add_argument("-ud", "--use_decoder", default='normal', type=str,
                         help="if decoder function")
-    parser.add_argument("-ub", "--use_beta", default=False, type=bool,
-                        help="if beta for decoder function")
     parser.add_argument("-es", "--embedding_size", default=32, type=int,
                         help="embedding size of nodes, W_down")
     parser.add_argument("-td", "--time_deconv", default=8, type=int,
                         help="deconv output channels number")
-    parser.add_argument("-ts", "--time_sample_num", default=4, type=int,
+    parser.add_argument("-ts", "--time_sample_num", default=2, type=int,
                         help="time sampling number")
     parser.add_argument("-cm", "--constraint_method", default='min_max', type=str,
                         help="time constraint computing method")
@@ -258,5 +252,6 @@ if __name__ == '__main__':
 
     # run
     args = parser.parse_args()
+    print(args)
     main(args)
     log('finish execution')
