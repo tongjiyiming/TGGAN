@@ -1,5 +1,6 @@
 
 import numpy as np
+np.set_printoptions(precision=6, suppress=True)
 from scipy.stats import gaussian_kde, norm
 from datetime import date, timedelta
 import matplotlib.pyplot as plt
@@ -110,7 +111,11 @@ def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_end,
             walks_mat = np.r_[walks_mat, [[-1, -1, -1]] * n_stops]
 
         # add start resdidual time
-        walks_mat = np.r_[[[x] + [len(selected_walks)] + [t_res_0]], walks_mat]
+        if start_walk_inx == n-1:
+            is_end = 1.
+        else:
+            is_end = 0.
+        walks_mat = np.r_[[[x] + [is_end] + [t_res_0]], walks_mat]
 
         walks.append(walks_mat)
     return np.array(walks)
@@ -229,7 +234,7 @@ def plot_edge_time_hist(edge_dict, t0, tmax, bins, ymax, save_file=None, show=Tr
 if __name__ == '__main__':
     n_nodes = 91
     scale = 0.1
-    rw_len = 3
+    rw_len = 1
     batch_size = 8
     train_ratio = 0.9
 

@@ -80,13 +80,16 @@ def main(args):
                       W_down_generator_size=embedding_size,
                       l2_penalty_generator=1e-7,
                       l2_penalty_discriminator=5e-5,
-                      # generator_start_layers=[40, 10],
+                      generator_x_up_layers=[64],
+                      generator_t0_up_layers=[128],
+                      generator_tau_up_layers=[128],
                       generator_layers=[50, 10],
                       discriminator_layers=[40, 10],
                       temp_start=5,
                       learning_rate=lr,
                       use_gumbel=True,
                       use_wgan=use_wgan,
+                      wasserstein_penalty=10,
                       use_decoder=use_decoder,
                       constraint_method=constraint_method,
                       )
@@ -163,13 +166,16 @@ def main(args):
                       generator_time_sample_num=time_sample_num,
                       l2_penalty_generator=1e-7,
                       l2_penalty_discriminator=5e-5,
-                      # generator_start_layers=[20, 10],
-                      generator_layers=[120, 20],
-                      discriminator_layers=[100, 20],
+                      generator_x_up_layers=[64],
+                      generator_t0_up_layers=[128],
+                      generator_tau_up_layers=[128],
+                      generator_layers=[100, 20],
+                      discriminator_layers=[80, 20],
                       temp_start=5,
                       learning_rate=lr,
                       use_gumbel=True,
                       use_wgan=use_wgan,
+                      wasserstein_penalty=10,
                       use_decoder=use_decoder,
                       constraint_method=constraint_method,
                       )
@@ -235,13 +241,13 @@ if __name__ == '__main__':
                         help="random walks maximum length in DeepTemporalWalk")
     parser.add_argument("-uw", "--use_wgan", default=True, type=bool,
                         help="if use WGAN loss function")
-    parser.add_argument("-ud", "--use_decoder", default='normal', type=str,
+    parser.add_argument("-ud", "--use_decoder", default='deep', type=str,
                         help="if decoder function")
     parser.add_argument("-es", "--embedding_size", default=32, type=int,
                         help="embedding size of nodes, W_down")
     parser.add_argument("-td", "--time_deconv", default=8, type=int,
                         help="deconv output channels number")
-    parser.add_argument("-ts", "--time_sample_num", default=2, type=int,
+    parser.add_argument("-ts", "--time_sample_num", default=4, type=int,
                         help="time sampling number")
     parser.add_argument("-cm", "--constraint_method", default='min_max', type=str,
                         help="time constraint computing method")
