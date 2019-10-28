@@ -140,9 +140,6 @@ def main(args):
         time_deconv = args.time_deconv
         time_sample_num = args.time_sample_num
         n_eval_loop = args.n_eval_loop
-        print('****** use wgan:', use_wgan)
-        print('****** use decoder:', use_decoder)
-        print('****** use constraint_method:', constraint_method)
 
         # random data from metro
         userid = args.userid
@@ -258,6 +255,5 @@ if __name__ == '__main__':
 
     # run
     args = parser.parse_args()
-    print(args)
     main(args)
     log('finish execution')

@@ -27,6 +27,18 @@ logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
+# create console handler and set level to debug
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+ch.setFormatter(formatter)
+logger.addHandler(ch)
+
+# # create console handler and set level to debug
+# th = logging.StreamHandler()
+# th.setLevel(logging.INFO)
+# ch.setFormatter(formatter)
+# logger.addHandler(ch)
+
 # add to log file
 fh = logging.FileHandler(log_file)
 fh.setLevel(logging.INFO)
