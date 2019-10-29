@@ -54,19 +54,21 @@ def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_end,
                          ):
     unique_days = np.unique(edges_days.reshape(1, -1)[0])
     walks = []
-    start_node = None
-    end_node = None
+
     for _ in range(batch_size):
-        # select a day with uniform distribution
-        walk_day = np.random.choice(unique_days)
-        mask = edges_days.reshape(1, -1)[0] == walk_day
-        # subset for this day
-        walk_day_edges = edges[mask]
-        walk_day_times = edges_times[mask]
+        while True:
+            # select a day with uniform distribution
+            walk_day = np.random.choice(unique_days)
+            mask = edges_days.reshape(1, -1)[0] == walk_day
+            # subset for this day
+            walk_day_edges = edges[mask]
+            walk_day_times = edges_times[mask]
 
-        # select a start edge. and unbiased or biased to the starting edges
-        n = walk_day_edges.shape[0]
+            # select a start edge. and unbiased or biased to the starting edges
+            n = walk_day_edges.shape[0]
+            if n >= rw_len: break
 
+        n = n - rw_len + 1
         if init_walk_method is 'uniform': probs = Uniform_Prob(n)
         elif init_walk_method is 'linear': probs = Linear_Prob(n)
         elif init_walk_method is 'exp': probs = Exp_Prob(n)
@@ -232,23 +234,25 @@ def plot_edge_time_hist(edge_dict, t0, tmax, bins, ymax, save_file=None, show=Tr
 
 
 if __name__ == '__main__':
-    n_nodes = 91
+
     scale = 0.1
-    rw_len = 1
+    rw_len = 2
     batch_size = 8
     train_ratio = 0.9
 
     # random data from metro
-    file = 'data/metro_user_4.txt'
+    file = 'data/auth_user_0.txt'
     edges = np.loadtxt(file)
+    n_nodes = int(edges[:, 1:3].max() + 1)
     print(edges)
+    print('n_nodes', n_nodes)
     t_end = 1.
     train_edges, test_edges = Split_Train_Test(edges, train_ratio)
     # print('train shape:', train_edges.shape)
     # print('test shape:', test_edges.shape)
     walker = TemporalWalker(n_nodes, train_edges, t_end,
                             scale, rw_len, batch_size,
-                            init_walk_method='exp',
+                            init_walk_method='uniform',
                             )
 
     walks = walker.walk().__next__()

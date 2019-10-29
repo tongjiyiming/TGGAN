@@ -562,7 +562,6 @@ class TGGAN:
             node_outputs = []
             tau_outputs = []
 
-            # LSTM tine steps
             # generate the first three start elements: start x, residual time, and maximum possible length
             output, state = self.stacked_lstm.call(inputs, state)
             with tf.name_scope('GEN_START_TIME'):
@@ -584,52 +583,54 @@ class TGGAN:
                 inputs = tf.layers.dense(t0_res_output, self.params['W_Down_Discriminator_size'],
                                          name="Generator.t0_lstm_input",
                                          reuse=reuse, activation=tf.nn.tanh)
+            # LSTM tine steps
+            for i in range(self.rw_len):
+                # generate temporal edge part
+                for j in range(2):
+                    # LSTM for first node
+                    output, state = self.stacked_lstm.call(inputs, state)
+                    with tf.variable_scope('GEN_NODE'):
+                        if i > 0 or j > 0: tf.get_variable_scope().reuse_variables()
 
-            # generate temporal edge part
-            for j in range(2):
-                # LSTM for first node
+                        if edge_input is not None and i <= self.rw_len-2:  # for evaluation generation
+                            output = edge_input[:, i * 2 + j]
+                        else:
+                            # Blow up to dimension N using W_up
+                            logit = tf.matmul(output, self.W_up) + self.b_W_up
+                            self.logit = logit
+
+                            # Perform Gumbel softmax to ensure gradients flow
+                            if gumbel: output = gumbel_softmax(logit, temperature=self.temp, hard=True)
+                            else:      output = tf.nn.softmax(logit)
+
+                        node_outputs.append(output)
+
+                        # Back to dimension d
+                        inputs = tf.matmul(output, self.W_down_generator)
+
+                # LSTM for   tau
                 output, state = self.stacked_lstm.call(inputs, state)
-                with tf.variable_scope('GEN_NODE'):
-                    if j > 0: tf.get_variable_scope().reuse_variables()
+                with tf.variable_scope('GEN_TAU_TIME'):
+                    if i > 0: tf.get_variable_scope().reuse_variables()
 
-                    if edge_input is not None:  # for evaluation generation
-                        output = edge_input[:, j]
+                    if tau_input is not None and i <= self.rw_len-2:  # for evaluation generation
+                        tau = tau_input[:, i]
                     else:
-                        # Blow up to dimension N using W_up
-                        logit = tf.matmul(output, self.W_up) + self.b_W_up
-                        self.logit = logit
+                        tau = self.generate_time(output, "tau")
 
-                        # Perform Gumbel softmax to ensure gradients flow
-                        if gumbel: output = gumbel_softmax(logit, temperature=self.temp, hard=True)
-                        else:      output = tf.nn.softmax(logit)
+                        if self.params['constraint_method'] != "none":
+                            tau = self.time_constraint(tau, method=self.params['constraint_method']) * res_time
 
-                    node_outputs.append(output)
+                    self.tau = tau
+                    res_time = tau
+                    # res_time = tf.stop_gradient(res_time)
 
-                    # Back to dimension d
-                    inputs = tf.matmul(output, self.W_down_generator)
+                    # save outputs
+                    tau_outputs.append(tau)
 
-            # LSTM for tau
-            output, state = self.stacked_lstm.call(inputs, state)
-            with tf.name_scope('GEN_TAU_TIME'):
-
-                if tau_input is not None:  # for evaluation generation
-                    tau = tau_input
-                else:
-                    tau = self.generate_time(output, "tau")
-
-                    if self.params['constraint_method'] != "none":
-                        tau = self.time_constraint(tau, method=self.params['constraint_method']) * res_time
-
-                self.tau = tau
-                res_time = tau
-                # res_time = tf.stop_gradient(res_time)
-
-                # save outputs
-                tau_outputs.append(tau)
-
-                # convert to input
-                inputs = tf.layers.dense(tau, int(self.W_down_generator.shape[-1]),
-                                         name="Generator.tau_input", activation=tf.nn.tanh)
+                    # convert to input
+                    inputs = tf.layers.dense(tau, int(self.W_down_generator.shape[-1]),
+                                             name="Generator.tau_input", activation=tf.nn.tanh)
 
             # LSTM for end indicator
             output, state = self.stacked_lstm.call(inputs, state)
@@ -849,9 +850,9 @@ class TGGAN:
                         x_input=self.start_x_0, t0_input=t0_input,
                         gumbel=gumbel, legacy=legacy)
                 else:
-                    t0_input = fake_tau_outputs[:, -2, :]
-                    edge_input = fake_node_outputs[:, -2:, :]
-                    tau_input = fake_tau_outputs[:, -1, :]
+                    t0_input = fake_tau_outputs[:, 0, :]
+                    edge_input = fake_node_outputs[:, 2:, :]
+                    tau_input = fake_tau_outputs[:, 1:, :]
                     fake_x_output, fake_t0_res_output, \
                     fake_node_outputs, fake_tau_outputs, \
                     fake_end_output = self.generator_function(
@@ -1022,97 +1023,72 @@ class TGGAN:
 
                 log('**** Starting Evaluation ****')
 
+
+                fake_graphs = []
+                fake_x_t0 = []
+                real_walks = []
+                real_x_t0 = []
+                for q in range(n_eval_iters):
+                    fake_outputs, node_logit = self.session.run([
+                        sample_many, self.logit], {self.temp: 0.5})
+                    fake_x, fake_t0, fake_edges, fake_t, fake_end = fake_outputs
+                    smpls = None
+                    stop = [False] * n_smpls
+                    for i in range(n_eval_loop):
+                        x, t0, e, tau, le = fake_x[i], fake_t0[i], fake_edges[i], fake_t[i], fake_end[i]
+
+                        if q == 0 and i >= n_eval_loop-3:
+                            log('eval_iters: {} eval_loop: {}'.format(q, i))
+                            log('eval node logit min: {} max: {}'.format(node_logit.min(), node_logit.max()))
+                            log('generated [x, t0, e, tau, end]\n[{}, {}, {}, {}, {}]'.format(
+                                x[0], t0[0, 0], e[0, :], tau[0, :, 0], le[0]
+                            ))
+                            log('generated [x, t0, e, tau, end]\n[{}, {}, {}, {}, {}]'.format(
+                                x[1], t0[1, 0], e[1, :], tau[1, :, 0], le[1]
+                            ))
+
+                        e = e.reshape(-1, self.rw_len, 2)
+                        tau = tau.reshape(-1, self.rw_len, 1)
+                        if i == 0:
+                            smpls = np.concatenate([e, tau],axis=-1)
+                        else:
+                            new_pred = np.concatenate([e[:, -1:], tau[:, -1:]], axis=-1)
+                            smpls = np.concatenate([smpls, new_pred], axis=1)
+
+                        # judge if reach max length
+                        for b in range(n_smpls):
+                            b_le = le[b]
+
+                            if i == 0 and b_le == 1:  # end
+                                stop[b] = True
+                            if i > 0 and stop[b]:  # end
+                                smpls[b, -1, :] = -1
+                            if i > 0 and not stop[b] and b_le == 1:
+                                stop[b] = True
+
+                    fake_x = np.array(fake_x).reshape(-1, 1)
+                    fake_t0 = np.array(fake_t0).reshape(-1, 1)
+                    fake_len = np.array(fake_end).reshape(-1, 1) # change to end
+                    fake_start = np.c_[fake_x, fake_t0, fake_len]
+                    fake_x_t0.append(fake_start)
+                    fake_graphs.append(smpls)
+
+                for _ in range(eval_transitions // self.batch_size):
+                    real_x, real_t0, real_edge, real_tau, real_length \
+                        = self.session.run([
+                        self.real_x_input_discretes, self.real_t0_res_inputs,
+                        self.real_edge_inputs_discrete, self.real_tau_inputs,
+                        self.real_end_discretes
+                    ], feed_dict={self.temp: 0.5})
+
+                    walk = np.c_[real_edge.reshape(-1, 2), real_tau.reshape(-1, 1)]
+                    real_walks.append(walk)
+                    real_start = np.stack([real_x, real_t0[:, 0], real_length], axis=1)
+                    real_x_t0.append(real_start)
+
+                fake_graphs = np.array(fake_graphs)
+
                 try:
-                    fake_walks = []
-                    fake_x_t0 = []
-                    real_walks = []
-                    real_x_t0 = []
-                    for q in range(n_eval_iters):
-                        fake_outputs, node_logit = self.session.run([
-                            sample_many, self.logit], {self.temp: 0.5})
-                        fake_x, fake_t0, fake_edges, fake_t, fake_end = fake_outputs
-                        smpls = None
-                        stop = [False] * n_smpls
-                        for i in range(n_eval_loop):
-                            x, t0, e, tau, le = fake_x[i], fake_t0[i], fake_edges[i], fake_t[i], fake_end[i]
-
-                            if q == 0:
-                                log('eval_iters: {} eval_loop: {}'.format(q, i))
-                                log('eval node logit min: {} max: {}'.format(node_logit.min(), node_logit.max()))
-                                log('generated [le, x, t0, tau, end]\n[{}, {}, {}, {}, {}]'.format(
-                                    le[0], x[0], t0[0, 0], tau[0, :, 0], le[0]
-                                ))
-                                log('generated [le, x, t0, tau, end]\n[{}, {}, {}, {}, {}]'.format(
-                                    le[1], x[1], t0[1, 0], tau[1, :, 0], le[1]
-                                ))
-                            if self.rw_len == 1:
-                                if i == 0:
-                                    smpls = np.c_[e, tau[:, :, 0]]
-                                else:
-                                    smpls = np.c_[smpls, e, tau[:, :, 0]]
-
-                                for b in range(n_smpls):
-                                    b_le = int(le[b])
-                                    if i == 0 and b_le == 1:
-                                        stop[b] = True
-
-                                    start = i * 3
-                                    if i > 0 and stop[b]:
-                                        smpls[b, start: start + 3] = -1
-                                    if i > 0 and b_le == 1:
-                                        stop[b] = True
-                            else:
-                                for j in range(self.rw_len):
-                                    if i == 0 and j == 0:
-                                        smpls = np.c_[e[:, j * 2:(j + 1) * 2], tau[:, :1, 0]]
-                                    if i == 0 and j > 0:
-                                        smpls = np.c_[smpls, e[:, j * 2: (j + 1) * 2], tau[:, :1, 0]]
-                                    if i > 0 and j > 0:  # ignore the first edge since it repeats last eval_loop
-                                        smpls = np.c_[smpls, e[:, j * 2: (j + 1) * 2], tau[:, :1, 0]]
-                                # judge if reach max length
-                                for b in range(n_smpls):
-                                    b_le = le[b]
-                                    if i == 0 and b_le < self.rw_len:  # end
-                                        smpls[b, (i * self.rw_len + b_le) * 3:] = -1
-                                        stop[b] = True
-
-                                    start = i * self.rw_len - i + 1
-                                    if i > 0 and not stop[b] and b_le <= 1:  # end
-                                        smpls[b, start * 3: (start + self.rw_len - 1) * 3] = -1
-                                        stop[b] = True
-                                    if i > 0 and not stop[b] and b_le > 1 and b_le < self.rw_len:
-                                        smpls[b, (start + b_le) * 3:] = -1
-                                        stop[b] = True
-                                    if i > 0 and stop[b]:
-                                        smpls[b, start * 3: (start + self.rw_len - 1) * 3] = -1
-
-                        fake_x = np.array(fake_x).reshape(-1, 1)
-                        fake_t0 = np.array(fake_t0).reshape(-1, 1)
-                        fake_len = np.array(fake_end).reshape(-1, 1) # change to end
-                        fake_start = np.c_[fake_x, fake_t0, fake_len]
-                        fake_x_t0.append(fake_start)
-                        fake_walks.append(smpls)
-
-                    for _ in range(eval_transitions // self.batch_size):
-                        real_x, real_t0, real_edge, real_tau, real_length \
-                            = self.session.run([
-                            self.real_x_input_discretes, self.real_t0_res_inputs,
-                            self.real_edge_inputs_discrete, self.real_tau_inputs,
-                            self.real_end_discretes
-                        ], feed_dict={self.temp: 0.5})
-
-                        walk = np.c_[real_edge.reshape(-1, 2), real_tau.reshape(-1, 1)]
-                        real_walks.append(walk)
-                        real_start = np.stack([real_x, real_t0[:, 0], real_length], axis=1)
-                        real_x_t0.append(real_start)
-
-                    if self.rw_len == 1:
-                        seq_len = 3 * n_eval_loop
-                        fake_graphs = np.array(fake_walks).reshape(-1, seq_len)
-                    else:
-                        seq_len = 3 * (self.rw_len * n_eval_loop - n_eval_loop + 1)
-                        fake_graphs = np.array(fake_walks).reshape(-1, seq_len)
-
                     fake_walks = fake_graphs.reshape(-1, 3)
                     fake_mask = fake_walks[:, 0] > -1
                     fake_walks = fake_walks[fake_mask]
@@ -1319,14 +1295,14 @@ class TGGAN:
                     fake_loss_file = "{}/{}_training_loss_iter_{}.npz".format(output_directory, timestr, _it + 1)
                     np.savez_compressed(fake_loss_file, disc_losses=disc_losses, gen_losses=gen_losses)
                     log('assembled graph to file: {} \nas array\n {}\n with shape: {}'.format(
-                        fake_graph_file, list(fake_graphs[:2, :]), fake_graphs.shape
+                        fake_graph_file, list(fake_graphs[0, :2, :]), fake_graphs.shape
                     ))
                     save_file = "{}/{}_iter_{}.ckpt".format(save_directory, model_name, _it + 1)
                     d = saver.save(self.session, save_file)
                     log("**** Saving snapshots into {} ****".format(save_file))
                 except ValueError as e:
                     print(e)
-                    log('reshape fake walks got error. Fake walks: {}'.format(fake_walks))
+                    log('reshape fake walks got error. Fake graphs shape: {} \n{}'.format(fake_graphs[0].shape, fake_walks[:3]))
                     continue
                 t = time.time() - starting_time
                 log('**** end evaluation **** took {} seconds so far...'.format(int(t)))
@@ -1441,20 +1417,20 @@ if __name__ == '__main__':
 
     tf.compat.v1.reset_default_graph()
 
-    n_nodes = 91
-    n_edges = n_nodes * n_nodes
     scale = 0.1
-    rw_len = 1
-    batch_size = 8
-    train_ratio = 0.8
     t_end = 1.
-    embedding_size = 32
     lr = 0.0003
     gpu_id = 0
 
     # random data from metro
-    file = 'data/metro_user_6.txt'
+    file = 'data/auth_user_0.txt'
     edges = np.loadtxt(file)
+    n_nodes = int(edges[:, 1:3].max() + 1)
+    embedding_size = n_nodes // 2
+    rw_len = 2
+    batch_size = 8
+    train_ratio = 0.8
+
     train_edges, test_edges = Split_Train_Test(edges, train_ratio)
 
     walker = TemporalWalker(n_nodes, train_edges, t_end,

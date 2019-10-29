@@ -41,28 +41,30 @@ def main(args):
 
         log('-'*40)
 
-        n_nodes = 18
         scale = 0.1
-        rw_len = args.rw_len
-        batch_size = 128
         train_ratio = 0.8
         t_end = 1.
-        embedding_size = 18
         gpu_id = 0
+
 
         lr = args.learningrate
         continue_training = args.continueTraining
         use_wgan = args.use_wgan
         use_decoder = args.use_decoder
         constraint_method = args.constraint_method
-        print('****** use wgan:', use_wgan)
-        print('****** use decoder:', use_decoder)
-        print('****** use constraint_method:', constraint_method)
+        time_deconv = args.time_deconv
+        time_sample_num = args.time_sample_num
+        n_eval_loop = args.n_eval_loop
 
         # random data from metro
         userid = args.userid
         file = args.file
         edges = np.loadtxt(file)
+        n_nodes = int(edges[:, 1:3].max() + 1)
+        embedding_size = args.embedding_size
+        rw_len = args.rw_len
+        batch_size = args.batch_size
+
         train_edges, test_edges = Split_Train_Test(edges, train_ratio)
 
 
@@ -83,8 +85,8 @@ def main(args):
                       generator_x_up_layers=[64],
                       generator_t0_up_layers=[128],
                       generator_tau_up_layers=[128],
-                      generator_layers=[50, 10],
-                      discriminator_layers=[40, 10],
+                      generator_layers=[100, 20],
+                      discriminator_layers=[80, 20],
                       temp_start=5,
                       learning_rate=lr,
                       use_gumbel=True,
@@ -94,12 +96,11 @@ def main(args):
                       constraint_method=constraint_method,
                       )
 
-        max_iters = 10000
+        max_iters = 100000
         eval_every = 1000
         plot_every = 1000
-        n_eval_loop = 1
         transitions_per_iter = batch_size * n_eval_loop
-        eval_transitions = transitions_per_iter * 100
+        eval_transitions = transitions_per_iter * 10
         model_name = 'auth-user-{}'.format(userid)
         save_directory = "snapshots-auth-user-{}".format(userid)
         output_directory='outputs-auth-user-{}'.format(userid)
@@ -123,13 +124,9 @@ def main(args):
 
         log('-'*40)
 
-        n_nodes = 91
         scale = 0.1
-        rw_len = args.rw_len
-        batch_size = args.batch_size
         train_ratio = 0.9
         t_end = 1.
-        embedding_size = args.embedding_size
         gpu_id = 0
 
         lr = args.learningrate
@@ -145,6 +142,11 @@ def main(args):
         userid = args.userid
         file = args.file
         edges = np.loadtxt(file)
+        n_nodes = int(edges[:, 1:3].max() + 1)
+        embedding_size = args.embedding_size
+        rw_len = args.rw_len
+        batch_size = args.batch_size
+
         train_edges, test_edges = Split_Train_Test(edges, train_ratio)
 
         walker = TemporalWalker(n_nodes, train_edges, t_end,
@@ -183,8 +185,8 @@ def main(args):
         transitions_per_iter = batch_size * n_eval_loop
         eval_transitions = transitions_per_iter * 100
         model_name = 'metro-user-{}'.format(userid)
-        save_directory = "snapshots-user-{}".format(userid)
-        output_directory='outputs-user-{}'.format(userid)
+        save_directory = "snapshots-metro-user-{}".format(userid)
+        output_directory='outputs-metro-user-{}'.format(userid)
 
         log_dict = tggan.train(
             train_edges=train_edges, test_edges=test_edges,
@@ -210,11 +212,11 @@ if __name__ == '__main__':
     parser.add_argument("-re", "--runEvaluation", default=False, type=bool,
                         help="if this run should run all evaluations")
     datasets = ['simulation', 'metro', 'auth']
-    parser.add_argument("-d", "--dataset", default="metro", type=str,
+    parser.add_argument("-d", "--dataset", default="auth", type=str,
                         help="one of: {}".format(", ".join(sorted(datasets))))
-    parser.add_argument("-ui", "--userid", default=4, type=int,
+    parser.add_argument("-ui", "--userid", default=0, type=int,
                         help="one of: {}".format(", ".join(sorted(datasets))))
-    parser.add_argument("-f", "--file", default="data/metro_user_4.txt", type=str,
+    parser.add_argument("-f", "--file", default="data/auth_user_0.txt", type=str,
                         help="file path of data in format [[d, i, j, t], ...]")
     processes = ['rand_binomial', 'rand_poisson']
     parser.add_argument("-sp", "--simProcess", default="rand_binomial", type=str,
@@ -234,13 +236,13 @@ if __name__ == '__main__':
                         help="random walks batch size in DeepTemporalWalk")
     parser.add_argument("-lr", "--learningrate", default=0.0003, type=float,
                         help="if this run should run all evaluations")
-    parser.add_argument("-rl", "--rw_len", default=1, type=int,
+    parser.add_argument("-rl", "--rw_len", default=4, type=int,
                         help="random walks maximum length in DeepTemporalWalk")
     parser.add_argument("-uw", "--use_wgan", default=True, type=bool,
                         help="if use WGAN loss function")
     parser.add_argument("-ud", "--use_decoder", default='deep', type=str,
                         help="if decoder function")
-    parser.add_argument("-es", "--embedding_size", default=32, type=int,
+    parser.add_argument("-es", "--embedding_size", default=16, type=int,
                         help="embedding size of nodes, W_down")
     parser.add_argument("-td", "--time_deconv", default=8, type=int,
                         help="deconv output channels number")
@@ -248,7 +250,7 @@ if __name__ == '__main__':
                         help="time sampling number")
     parser.add_argument("-cm", "--constraint_method", default='min_max', type=str,
                         help="time constraint computing method")
-    parser.add_argument("-ne", "--n_eval_loop", default=2, type=int,
+    parser.add_argument("-ne", "--n_eval_loop", default=40, type=int,
                         help="number of walk loops")
     parser.add_argument("-ct", "--continueTraining", default=False, type=bool,
                         help="if this run is restored from a corrupted run")
