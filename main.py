@@ -60,7 +60,7 @@ def main(args):
         userid = args.userid
         file = args.file
         edges = np.loadtxt(file)
-        n_nodes = int(edges[:, 1:3].max() + 1)
+        n_nodes = 28
         embedding_size = args.embedding_size
         rw_len = args.rw_len
         batch_size = args.batch_size
@@ -142,7 +142,7 @@ def main(args):
         userid = args.userid
         file = args.file
         edges = np.loadtxt(file)
-        n_nodes = int(edges[:, 1:3].max() + 1)
+        n_nodes = 91
         embedding_size = args.embedding_size
         rw_len = args.rw_len
         batch_size = args.batch_size
@@ -236,7 +236,7 @@ if __name__ == '__main__':
                         help="random walks batch size in DeepTemporalWalk")
     parser.add_argument("-lr", "--learningrate", default=0.0003, type=float,
                         help="if this run should run all evaluations")
-    parser.add_argument("-rl", "--rw_len", default=4, type=int,
+    parser.add_argument("-rl", "--rw_len", default=1, type=int,
                         help="random walks maximum length in DeepTemporalWalk")
     parser.add_argument("-uw", "--use_wgan", default=True, type=bool,
                         help="if use WGAN loss function")
@@ -250,7 +250,7 @@ if __name__ == '__main__':
                         help="time sampling number")
     parser.add_argument("-cm", "--constraint_method", default='min_max', type=str,
                         help="time constraint computing method")
-    parser.add_argument("-ne", "--n_eval_loop", default=40, type=int,
+    parser.add_argument("-ne", "--n_eval_loop", default=4, type=int,
                         help="number of walk loops")
     parser.add_argument("-ct", "--continueTraining", default=False, type=bool,
                         help="if this run is restored from a corrupted run")
