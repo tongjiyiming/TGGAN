@@ -1168,7 +1168,7 @@ class TGGAN:
                     truth_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(self.N)])
                     truth_ax.set_title('truth train edges number: {}'.format(len(truth_train_e_list)))
 
-                    truth_ax = fig.add_subplot(222, projection='3d')
+                    truth_ax = fig.add_subplot(224, projection='3d')
                     truth_ax.bar3d(truth_test_e_list[:, 0], truth_test_e_list[:, 1], zpos, dx, dy, truth_test_e_counts)
                     truth_ax.set_xlim([0, self.N])
                     truth_ax.set_ylim([0, self.N])
@@ -1310,8 +1310,8 @@ class TGGAN:
             if plot_every > 0 and (_it + 1) % plot_every == 0:
                 try:
                     if len(disc_losses) > 10:
-                        plt.plot(disc_losses[100::10], label="Critic loss")
-                        plt.plot(gen_losses[100::10], label="Generator loss")
+                        plt.plot(disc_losses[::10], label="Critic loss")
+                        plt.plot(gen_losses[::10], label="Generator loss")
                     else:
                         plt.plot(disc_losses, label="Critic loss")
                         plt.plot(gen_losses, label="Generator loss")
@@ -1327,8 +1327,8 @@ class TGGAN:
 
         log("**** Training completed after {} iterations. ****".format(_it + 1))
         try:
-            plt.plot(disc_losses[100::10], label="Critic loss")
-            plt.plot(gen_losses[100::10], label="Generator loss")
+            plt.plot(disc_losses[::10], label="Critic loss")
+            plt.plot(gen_losses[::10], label="Generator loss")
             plt.legend()
             plt.savefig('{}/{}_loss_res_final.png'.format(output_directory, timestr))
             plt.close()

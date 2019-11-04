@@ -411,3 +411,6 @@ def Edge_MMD_Metro(real_daily_sequences, sampled_walks, generated_walks):
     pvalue, tstat, sigma, MMDXY, MMDXZ = MMD_3_Sample_Test(
         counts_1.reshape(-1, 1), counts_3.reshape(-1, 1), counts_2.reshape(-1, 1), computeMMDs=True)
     return MMDXY
+
+if __name__ == "__main__":
+    fake_graphs = np.load("./outputs-metro-user-4/")

@@ -1,6 +1,8 @@
 
 import numpy as np
 np.set_printoptions(precision=6, suppress=True)
+import geopandas as gpd
+import seaborn as sns
 from scipy.stats import gaussian_kde, norm
 from datetime import date, timedelta
 import matplotlib.pyplot as plt
@@ -33,6 +35,7 @@ class TemporalWalker:
         self.init_walk_method = init_walk_method
         self.isTeleport = isTeleport
         self.isJump = isJump
+        self.teleport_prob = Teleport()
 
         # # kernel density estimation around current time
         # e_t_dict = {}
@@ -44,13 +47,13 @@ class TemporalWalker:
             yield temporal_random_walk(
                 self.n_nodes, self.edges_days, self.edges, self.edges_times, self.t_end,
                 self.scale, self.rw_len, self.batch_size,
-                self.init_walk_method, self.isTeleport, self.isJump,
+                self.init_walk_method, self.isTeleport, self.teleport_prob, self.isJump,
             )
 
 # @jit(nopython=True)
 def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_end,
                          scale, rw_len, batch_size,
-                         init_walk_method, isTeleport, isJump
+                         init_walk_method, isTeleport, teleport_probs, isJump,
                          ):
     unique_days = np.unique(edges_days.reshape(1, -1)[0])
     walks = []
@@ -79,19 +82,21 @@ def temporal_random_walk(n_nodes, edges_days, edges, edges_times, t_end,
 
         # choice nodes from start to walker lengths. if isTeleport: sample by the teleport probability
         # which allow sample a nearby nodes based on a small random teleport
+        selected_walks = walk_day_edges[start_walk_inx:start_walk_inx + rw_len]
+        selected_walks_reshape = selected_walks.reshape(-1, 1)
+        selected_times = walk_day_times[start_walk_inx:start_walk_inx + rw_len]
+
         if isTeleport:
-            # selected_walks = np.apply_along_axis(
-            #     func1d=lambda x: np.random.choice(n_nodes, p=teleport_probs[x[0]]),
-            #     axis=1,
-            #     arr=selected_walks,
-            # )
-            raise Exception('isTeleport not implemented yet')
-        else:
-            selected_walks = walk_day_edges[start_walk_inx:start_walk_inx + rw_len]
-            selected_times = walk_day_times[start_walk_inx:start_walk_inx + rw_len]
+            selected_walks_reshape = np.apply_along_axis(
+                func1d=lambda x: np.random.choice(n_nodes, p=teleport_probs[int(x[0])]),
+                axis=1,
+                arr=selected_walks_reshape,
+            )
+
         if isJump:
             raise Exception('isJump not implemented yet')
 
+        selected_walks = selected_walks_reshape.reshape(rw_len, 2)
         # get start residual time
         if start_walk_inx == 0: t_res_0 = t_end
         else:
@@ -172,39 +177,36 @@ def Uniform_Prob(n):
     c = [1./n]
     return c * n
 
-
 def Distance(a, b):
     return np.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2)
 
+def Teleport():
+    metro_stations = gpd.read_file('data/metro-stations-regional-correct.geojson')
+    n = metro_stations.shape[0]
+    metro_stations['STATION'] = metro_stations['STATION'] - 1
+    distance_matrix = np.zeros((91, 91), dtype=np.float)
+    for i in range(n):
+        i_id = metro_stations['STATION'][i]
+        i_geom = metro_stations.geometry[i]
+        for j in range(i + 1, n):
+            j_id = metro_stations['STATION'][j]
+            j_geom = metro_stations.geometry[j]
+            # 0.02 degree is about 1 km
+            distance_matrix[i_id, j_id] = 0.1 if Distance(i_geom, j_geom) < 0.02 else 0.001
 
-# def Teleport():
-    # metro_stations = gpd.read_file('data/metro/metro-stations-regional-correct.geojson')
-    # n = metro_stations.shape[0]
-    # metro_stations['STATION'] = metro_stations['STATION'] - 1
-    # distance_matrix = np.zeros((91, 91), dtype=np.float)
-    # for i in range(n):
-    #     i_id = metro_stations['STATION'][i]
-    #     i_geom = metro_stations.geometry[i]
-    #     for j in range(i + 1, n):
-    #         j_id = metro_stations['STATION'][j]
-    #         j_geom = metro_stations.geometry[j]
-    #         # 0.02 degree is about 1 km
-    #         distance_matrix[i_id, j_id] = 0.1 if Distance(i_geom, j_geom) < 0.02 else 0.001
-    #
-    # distance_matrix = distance_matrix + distance_matrix.T
-    # np.fill_diagonal(distance_matrix, 1)
-    # # distance_matrix = np.exp(distance_matrix)
-    #
-    # teleport_probs = distance_matrix / distance_matrix.sum(axis=1).reshape(-1, 1)
-    #
-    # return teleport_probs
+    distance_matrix = distance_matrix + distance_matrix.T
+    np.fill_diagonal(distance_matrix, 1)
+    # distance_matrix = np.exp(distance_matrix)
+
+    teleport_probs = distance_matrix / distance_matrix.sum(axis=1).reshape(-1, 1)
+
+    return teleport_probs
 
 
 def Get_Weekday(day):
     start_day = date(2016, 5, 1)
     current_day = start_day + timedelta(day)
     return current_day.weekday()
-
 
 def Is_Weekend(day):
     w = Get_Weekday(day)
@@ -236,26 +238,41 @@ def plot_edge_time_hist(edge_dict, t0, tmax, bins, ymax, save_file=None, show=Tr
 if __name__ == '__main__':
 
     scale = 0.1
-    rw_len = 2
+    rw_len = 1
     batch_size = 8
     train_ratio = 0.9
 
     # random data from metro
-    file = 'data/auth_user_0.txt'
+    file = 'data/metro_user_4.txt'
     edges = np.loadtxt(file)
-    n_nodes = int(edges[:, 1:3].max() + 1)
+    n_nodes = 91
     print(edges)
     print('n_nodes', n_nodes)
     t_end = 1.
     train_edges, test_edges = Split_Train_Test(edges, train_ratio)
-    # print('train shape:', train_edges.shape)
-    # print('test shape:', test_edges.shape)
+    print('train shape:', train_edges.shape)
+    print('test shape:', test_edges.shape)
     walker = TemporalWalker(n_nodes, train_edges, t_end,
                             scale, rw_len, batch_size,
-                            init_walk_method='uniform',
+                            init_walk_method='uniform', isTeleport=True,
                             )
 
     walks = walker.walk().__next__()
     print('walk length:', rw_len)
     print('walks shape:\n', walks.shape)
     print('walks:\n', walks)
+
+    fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+    for i in range(4):
+        j = np.random.choice(len(walker.teleport_prob))
+        ax.plot(walker.teleport_prob[j], linewidth=0.5,
+                label='Station {} minimum: {:04f}'.format(j, walker.teleport_prob[j].min()))
+    plt.legend(fontsize=10)
+    plt.title('Teleport probability examples', fontsize=12)
+    ax.tick_params(labelsize=11)
+    plt.xlabel('Stations', fontsize=11)
+    plt.ylabel('Probability', fontsize=11)
+    sns.despine(top=True, right=True)
+    plt.tight_layout()
+    plt.savefig('outputs/teleport_probs.png', dpi=90)
+    plt.close()

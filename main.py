@@ -145,6 +145,7 @@ def main(args):
         n_nodes = 91
         embedding_size = args.embedding_size
         rw_len = args.rw_len
+        is_teleport = args.is_teleport
         batch_size = args.batch_size
 
         train_edges, test_edges = Split_Train_Test(edges, train_ratio)
@@ -152,6 +153,7 @@ def main(args):
         walker = TemporalWalker(n_nodes, train_edges, t_end,
                                 scale, rw_len, batch_size,
                                 init_walk_method='uniform',
+                                isTeleport=is_teleport,
                                 )
 
         tggan = TGGAN(N=n_nodes, rw_len=rw_len,
@@ -212,11 +214,11 @@ if __name__ == '__main__':
     parser.add_argument("-re", "--runEvaluation", default=False, type=bool,
                         help="if this run should run all evaluations")
     datasets = ['simulation', 'metro', 'auth']
-    parser.add_argument("-d", "--dataset", default="auth", type=str,
+    parser.add_argument("-d", "--dataset", default="metro", type=str,
                         help="one of: {}".format(", ".join(sorted(datasets))))
-    parser.add_argument("-ui", "--userid", default=0, type=int,
+    parser.add_argument("-ui", "--userid", default=4, type=int,
                         help="one of: {}".format(", ".join(sorted(datasets))))
-    parser.add_argument("-f", "--file", default="data/auth_user_0.txt", type=str,
+    parser.add_argument("-f", "--file", default="data/metro_user_4.txt", type=str,
                         help="file path of data in format [[d, i, j, t], ...]")
     processes = ['rand_binomial', 'rand_poisson']
     parser.add_argument("-sp", "--simProcess", default="rand_binomial", type=str,
@@ -238,11 +240,13 @@ if __name__ == '__main__':
                         help="if this run should run all evaluations")
     parser.add_argument("-rl", "--rw_len", default=1, type=int,
                         help="random walks maximum length in DeepTemporalWalk")
+    parser.add_argument("-it", "--is_teleport", default=True, type=bool,
+                        help="if perform a prior teleport in spatial graph")
     parser.add_argument("-uw", "--use_wgan", default=True, type=bool,
                         help="if use WGAN loss function")
     parser.add_argument("-ud", "--use_decoder", default='deep', type=str,
                         help="if decoder function")
-    parser.add_argument("-es", "--embedding_size", default=16, type=int,
+    parser.add_argument("-es", "--embedding_size", default=32, type=int,
                         help="embedding size of nodes, W_down")
     parser.add_argument("-td", "--time_deconv", default=8, type=int,
                         help="deconv output channels number")
