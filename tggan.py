@@ -529,7 +529,7 @@ class TGGAN:
                         x_output = x_input
                     else:
                         # generate start node binary if not need
-                        x_output = tf.random_uniform(minval=0.7, maxval=1.9, shape=[n_samples, ])
+                        x_output = tf.random_uniform(minval=0.6, maxval=1.9, shape=[n_samples, ])
                         x_output = tf.cast(x_output, dtype=tf.int64)
                         x_output = tf.one_hot(x_output, 2)
                 elif x_mode == "generate":
@@ -662,8 +662,8 @@ class TGGAN:
         with tf.name_scope('time_constraint'):
             if method == 'relu':
                 t = tf.nn.relu(t) - tf.nn.relu(t - 1.)
-            elif method == 'l2_norm':
-                t = (tf.nn.l2_normalize(t, axis=0) + 1.) / 2.
+            elif method == 'clip':
+                t = tf.clip_by_value(t, 0., 1.)
             elif method == 'min_max':
                 min_ = tf.math.reduce_min(t, axis=0)[0]
                 t = tf.case([

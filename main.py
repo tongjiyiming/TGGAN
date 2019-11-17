@@ -4,6 +4,9 @@ import os
 import sys
 import argparse
 
+import matplotlib
+matplotlib.use('Agg')
+
 import tensorflow as tf
 import numpy as np
 import teneto
@@ -212,11 +215,11 @@ if __name__ == '__main__':
     parser.add_argument("-re", "--runEvaluation", default=False, type=bool,
                         help="if this run should run all evaluations")
     datasets = ['simulation', 'metro', 'auth']
-    parser.add_argument("-d", "--dataset", default="metro", type=str,
+    parser.add_argument("-d", "--dataset", default="auth", type=str,
                         help="one of: {}".format(", ".join(sorted(datasets))))
-    parser.add_argument("-ui", "--userid", default=4, type=int,
+    parser.add_argument("-ui", "--userid", default=0, type=int,
                         help="one of: {}".format(", ".join(sorted(datasets))))
-    parser.add_argument("-f", "--file", default="data/metro_user_4.txt", type=str,
+    parser.add_argument("-f", "--file", default="data/auth_user_0.txt", type=str,
                         help="file path of data in format [[d, i, j, t], ...]")
     processes = ['rand_binomial', 'rand_poisson']
     parser.add_argument("-sp", "--simProcess", default="rand_binomial", type=str,
@@ -232,17 +235,17 @@ if __name__ == '__main__':
                         help="scale of gaussian prior for kernel density estimation in DeepTemporalWalk")
 
     # DeepTemporalWalk
-    parser.add_argument("-bs", "--batch_size", default=32, type=int,
+    parser.add_argument("-bs", "--batch_size", default=128, type=int,
                         help="random walks batch size in DeepTemporalWalk")
     parser.add_argument("-lr", "--learningrate", default=0.0003, type=float,
                         help="if this run should run all evaluations")
-    parser.add_argument("-rl", "--rw_len", default=1, type=int,
+    parser.add_argument("-rl", "--rw_len", default=4, type=int,
                         help="random walks maximum length in DeepTemporalWalk")
     parser.add_argument("-uw", "--use_wgan", default=True, type=bool,
                         help="if use WGAN loss function")
     parser.add_argument("-ud", "--use_decoder", default='deep', type=str,
                         help="if decoder function")
-    parser.add_argument("-es", "--embedding_size", default=32, type=int,
+    parser.add_argument("-es", "--embedding_size", default=16, type=int,
                         help="embedding size of nodes, W_down")
     parser.add_argument("-td", "--time_deconv", default=8, type=int,
                         help="deconv output channels number")
@@ -250,7 +253,7 @@ if __name__ == '__main__':
                         help="time sampling number")
     parser.add_argument("-cm", "--constraint_method", default='min_max', type=str,
                         help="time constraint computing method")
-    parser.add_argument("-ne", "--n_eval_loop", default=4, type=int,
+    parser.add_argument("-ne", "--n_eval_loop", default=100, type=int,
                         help="number of walk loops")
     parser.add_argument("-ct", "--continueTraining", default=False, type=bool,
                         help="if this run is restored from a corrupted run")
