@@ -13,6 +13,7 @@ import os
 import shutil
 import logging
 import datetime
+import time
 
 # setup logging
 for handler in logging.root.handlers[:]:
@@ -48,7 +49,7 @@ logger.addHandler(fh)
 def log(str): logger.info(str)
 
 import tensorflow as tf
-log('is GPU available? {}'.format(tf.test.is_gpu_available(cuda_only=True)))
+log('is GPU available? {}'.format(tf.test.is_gpu_available()))
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 import time
 import numpy as np
@@ -875,7 +876,7 @@ class TGGAN:
     def train(self, train_edges, test_edges, max_iters=1000, stopping=None,
               eval_transitions=1e6, n_eval_loop=3,
               max_patience=5, eval_every=500, plot_every=1000,
-              output_directory='outputs', save_directory="snapshots",
+              output_directory='outputs', save_directory="snapshots", timing_directory="timings",
               model_name=None, continue_training=False):
         """
 
@@ -960,6 +961,9 @@ class TGGAN:
         if not os.path.isdir(output_directory):
             os.makedirs(output_directory)
 
+        if not os.path.isdir(timing_directory):
+            os.makedirs(timing_directory)
+
         if not os.path.isdir(tensorboard_log_path):
             os.makedirs(tensorboard_log_path)
         else:
@@ -982,9 +986,12 @@ class TGGAN:
         n_eval_iters = int(eval_transitions / n_smpls)
         sample_many = self.generate_discrete(n_samples=n_smpls, n_eval_loop=n_eval_loop, reuse=True)
 
+        # start main loop
+        time_all = np.zeros(max_iters)
         log("**** Starting training. ****")
 
         for _it in range(max_iters):
+            time_start = time.time()
 
             # Generator training iteration
             gen_loss, _ = self.session.run([self.gen_cost, self.gen_train_op],
@@ -998,6 +1005,8 @@ class TGGAN:
                     feed_dict={self.temp: temperature}
                 )
                 _disc_l.append(disc_loss)
+            time_end = time.time()
+            time_all[_it] = time_end - time_start
 
             gen_losses.append(gen_loss)
             disc_losses.append(np.mean(_disc_l))
@@ -1338,6 +1347,7 @@ class TGGAN:
         # if stopping is None:
         #     saver.restore(self.session, save_file)
         #### Training completed.
+        np.savetxt('{}/{}_iterations_{}.txt'.format(timing_directory, model_name, max_iters), time_all)
         log_dict = {"disc_losses": disc_losses, 'gen_losses': gen_losses, 'val_performances': val_performances,
                     'edge_overlaps': eo, 'generated_graphs': graphs}
         return log_dict

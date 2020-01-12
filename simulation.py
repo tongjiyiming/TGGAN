@@ -4,70 +4,70 @@ import teneto
 import numpy as np
 import matplotlib.pyplot as plt
 import time
+import networkx as nx
 
 
-def simulation(n_nodes, n_times, prob, simProcess, ncontacts, lam):
-    tnet = teneto.TemporalNetwork(timetype='continuous')
+def discrete_time_simulation(n_nodes, n_times, prob, simProcess, ncontacts, lam, nettype):
+    tnet = teneto.TemporalNetwork(timetype='discrete')
     if simProcess == 'rand_binomial':
-        tnet.generatenetwork(simProcess, size=(n_nodes, n_nodes, n_times), nettype='bu', prob=prob, netrep='graphlet')
+        tnet.generatenetwork(simProcess, size=(n_nodes, n_nodes, n_times), nettype=nettype, prob=prob, netrep='graphlet')
     elif simProcess == 'rand_poisson':
-        tnet.generatenetwork(simProcess, nnodes=n_nodes, ncontacts=ncontacts, nettype='bu', lam=lam, netrep='graphlet')
+        tnet.generatenetwork(simProcess, nnodes=n_nodes, ncontacts=ncontacts, nettype=nettype, lam=lam, netrep='graphlet')
     else:
         raise Exception('simulation method do not supported!')
     return tnet
 
-def multi_simulate(n_days, n_nodes, n_times, prob, simProcess, ncontacts, lam):
+def multi_discrete_time_simulate(n_days, n_nodes, n_times, prob, simProcess, ncontacts, lam, nettype):
     res_sim = []
     for d in range(n_days):
-        tnet = simulation(n_nodes, n_times, prob, simProcess, ncontacts, lam)
+        tnet = discrete_time_simulation(n_nodes, n_times, prob, simProcess, ncontacts, lam, nettype)
         arr = tnet.network.values
         res_sim.extend(list(
             np.c_[[[d]]*arr.shape[0], arr]
         ))
     return np.array(res_sim).reshape(-1, 4)
 
-if __name__ == "__main__":
-    import numpy as np
-    import tacoma as tc
-    import networkx as nx
-
+def continuous_time_simulation(n_nodes, t0=0.1, tmax=1.0, mean_tau=0.05, mean_degree=1.5):
     # static structure parameters
-    N = 5
-    M = 10
-    mean_degree = 1.5
-    p = mean_degree / (N - 1.0)
+    p = mean_degree / (n_nodes - 1.0)
 
     # temporal parameters
     edge_lists = []
-    mean_tau = 1.0
-    t0 = 0.0
-    tmax = 100.0
     t = []
     this_time = t0
 
     while this_time < tmax:
-        #     G = nx.fast_gnp_random_graph(N, p) # Generate a new random network
-        G = nx.gnm_random_graph(N, M)  # Generate a Erdos Renyi network
-        #     G = nx.barabasi_albert_graph(N, M) # Generate a Erdos Renyi network
+        G = nx.fast_gnp_random_graph(n_nodes, p)  # Generate a new random network
+        # G = nx.gnm_random_graph(N, M)  # Generate a Erdos Renyi network
+        # G = nx.barabasi_albert_graph(N, M) # Generate a Erdos Renyi network
         these_edges = list(G.edges())
         t.append(this_time)
         edge_lists.append(these_edges)
-
-        this_time += np.random.exponential(scale=1 / mean_tau)
+        this_time += np.random.exponential(scale=mean_tau)
 
     # save to _tacoma-object
     el = tc.edge_lists()
 
-    el.N = N
+    el.N = n_nodes
     el.t = t
     el.edges = edge_lists
     el.tmax = tmax
-    print(el.t)
-    print(el.edges)
-    print("Number of mistakes:", tc.verify(el))
-    sis = tc.SIS(N, tmax, 0.1, 0.1)
-    result = tc.gillespie_SIS(el, sis)
-    print(sis)
+    return el
+
+def multi_continuous_time_simulate(n_days, n_nodes, t0=0.1, tmax=1.0, mean_tau=0.05, mean_degree=1.5):
+    res_sim = []
+    for d in range(n_days):
+        el = continuous_time_simulation(n_nodes, t0, tmax, mean_tau, mean_degree)
+        for k in range(len(el.t)):
+            t = el.t[k]
+            for i, j in el.edges[k]:
+                res_sim.append([d, i, j, t])
+    return res_sim
+
+if __name__ == "__main__":
+    n_nodes = 5
+    n_days = 3
+    el = continuous_time_simulation(n_nodes)
 
     from tacoma.drawing import edge_activity_plot
 
@@ -77,6 +77,10 @@ if __name__ == "__main__":
                        alpha=1.0,  # opacity
                        linewidth=1.5,
                        )
+    plt.show()
+
+    edges = multi_continuous_time_simulate(n_days, n_nodes)
+    print(np.array(edges))
 
     # from pandas.compat.numpy import *
     # edges=np.array(np.loadtxt('edgeaa.txt'))
@@ -99,16 +103,17 @@ if __name__ == "__main__":
     # print('tnet\n', tnet.network)
     # print('tnet shape:', tnet.network.shape)
 
-    # n_nodes = 10
-    # n_times = 100
+    # n_nodes = 27
+    # n_times = 10
     # lam = int(n_times / 10)
     # n_days = 1000
     # prob = (0.5, 0.5)
-    # ncontacts=3
-    # # simProcess = 'rand_binomial'
-    # simProcess = 'rand_poisson'
-    # tnet = simulation(n_nodes, n_times, prob, simProcess, ncontacts, lam)
-    # print('one sampled graph:\n', tnet.network.values.shape)
+    # ncontacts = 3
+    # simProcess = 'rand_binomial'
+    # # simProcess = 'rand_poisson'
+    # tnet = simulation(n_nodes, n_times, prob, simProcess, ncontacts, lam, nettype='bd')
+    # print('check_input(tnet)', teneto.utils.utils.check_input(tnet))
+    # print('one sampled graph:\n', tnet.network)
     #
     # all_graphs = multi_simulate(n_days, n_nodes, n_times, prob, simProcess, ncontacts, lam)
     # print('all sampled graphs:\n', all_graphs.shape)
@@ -198,11 +203,12 @@ if __name__ == "__main__":
     # end = time.clock()
     # print(end-start)
     #
-    # start = time.clock()
+    # start = time.time()
     # print('shortest_temporal_path')
     # # k=teneto.networkmeasures.sid(tnet,tnet,calc='global')
     # g=teneto.networkmeasures.shortest_temporal_path(tnet)
-    # end = time.clock()
+    # print(tnet)
+    # end = time.time()
     # print(end-start)
     #
     # start = time.clock()
@@ -214,5 +220,8 @@ if __name__ == "__main__":
     # start = time.clock()
     # print('local_variation')
     # j=teneto.networkmeasures.local_variation(tnet)
+    # end = time.clock()
+    # print(end-start)
+
     # end = time.clock()
     # print(end-start)

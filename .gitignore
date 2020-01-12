@@ -1,7 +1,10 @@
 # TGGAN
+.DS_Store
 .idea/
 outputs*
 snapshots*
+timings*
+evaluation_outputs/
 graph/
 
 # Byte-compiled / optimized / DLL files

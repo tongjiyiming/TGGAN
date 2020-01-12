@@ -2,15 +2,28 @@ from collections import Counter
 from itertools import product
 import numpy as np
 from numpy import sqrt
-from sklearn.metrics.pairwise import rbf_kernel
 import scipy
 import scipy.stats
 from scipy.io import savemat
+
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from utils import *
 import os
+from itertools import product
 
+from sklearn.metrics.pairwise import rbf_kernel
+import tacoma as tc
+import teneto
+from tacoma import degree_distribution
+from tacoma.drawing import edge_activity_plot
+from tacoma.analysis import plot_group_size_histogram, plot_group_durations, plot_social_trajectory
+import networkx as nx
+
+from func_timeout import func_timeout, func_set_timeout, FunctionTimedOut
+import time
 
 def My_Node_Counter(sequences):
     """
@@ -230,6 +243,25 @@ def MMD_3_Sample_Test(X, Y, Z, sigma=-1, SelectSigma=2, computeMMDs=False):
         MMDXZ = None
     return pvalue, tstat, sigma, MMDXY, MMDXZ
 
+def MMD(X, Y, sigma=-1, SelectSigma=2):
+    '''Performs the relative MMD test which returns a test statistic for whether Y is closer to X or than Z.
+    See http://arxiv.org/pdf/1511.04581.pdf
+    The bandwith heuristic is based on the median heuristic (see Smola,Gretton).
+    '''
+    Kyy = grbf(Y, Y, sigma)
+    Kxy = grbf(X, Y, sigma)
+    Kyynd = Kyy - np.diag(np.diagonal(Kyy))
+    m = Kxy.shape[0]
+    n = Kyy.shape[0]
+
+    u_yy = np.sum(Kyynd) * (1. / (n * (n - 1)))
+    u_xy = np.sum(Kxy) / (m * n)
+
+    Kxx = grbf(X, X, sigma)
+    Kxxnd = Kxx - np.diag(np.diagonal(Kxx))
+    u_xx = np.sum(Kxxnd) * (1. / (m * (m - 1)))
+    MMDXY = u_xx + u_yy - 2. * u_xy
+    return MMDXY
 
 def MMD_Diff_Var(Kyy, Kzz, Kxy, Kxz):
     '''
@@ -383,7 +415,7 @@ def MMD_unbiased(Kxx, Kyy, Kxy):
     return MMDsquared
 
 
-def Edge_MMD_Metro(real_daily_sequences, sampled_walks, generated_walks):
+def Edge_MMD_Metro(real_daily_sequences, sampled_walks, generated_walks, n_nodes):
     counter_1 = My_Edge_Counter(real_daily_sequences)
     counts_1 = []
     for pair in product(range(n_nodes), range(-1, n_nodes)):
@@ -550,40 +582,504 @@ def Time_Plot(fake_graphs, real_walks, train_edges, test_edges, N, t_end, output
     plt.savefig('{}/iter_{}_validation.eps'.format(output_directory, _it + 1), dpi=200)
     plt.close()
 
+def Create_Temporal_Graph(edges, N, tmax, edge_contact_time=None):
+    '''
+
+    :param edges: a sampled temporal graph, with shape(None, 3), its time from t0 to t_end
+    :param N:
+    :param tmax:
+    :param edge_contact_time:
+    :return:
+    '''
+
+    el = tc.edge_lists()
+    el.N = N
+    el.tmax = tmax
+
+    edges = edges[edges[:,0] != edges[:,1]]
+    unique_times = np.sort(np.unique(edges[:, 2]))
+    edge_times = [0.0]
+    edge_list = [[]]
+    for t in unique_times:
+        edge_times.append(t)
+        e = edges[edges[:, 2] == t][:, :2].astype(int)
+        edge_list.append([(x, y) for x, y in e])
+        if edge_contact_time is not None:
+            edge_times.append(t + edge_contact_time)
+            edge_list.append([])
+    el.t = edge_times
+    el.edges = edge_list
+    return el
+
+def Plot_Graph(tn, file_name):
+    fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+    fig, ax = edge_activity_plot(tn,
+                       ax=ax,
+                       alpha=1.0,  # opacity
+                       linewidth=3,
+                       )
+    ax.set_xlim([0, tn.tmax])
+    plt.tight_layout()
+    plt.savefig(file_name)
+
+class Graphs:
+    def __init__(self, data, N, tmax, edge_contact_time, is_real_graph):
+        # self.N = N
+        # self.tmax = tmax
+        # self.edge_contact_time = edge_contact_time
+
+        graph_list = []
+        if is_real_graph:
+            all_d = np.unique(data[:, 0])
+            for d in all_d:
+                one_graph = data[data[:, 0] == d][:, 1:]
+                tg = Create_Temporal_Graph(edges=one_graph, N=N, tmax=tmax,
+                                           edge_contact_time=edge_contact_time)
+                graph_list.append(tg)
+            self.graph_list = graph_list
+
+            all_edges = np.unique(data[:, 1:3], axis=0)
+            edge_time_set = dict()
+            for e in all_edges:
+                times = data[(data[:, 1] == e[0]) & (data[:, 2] == e[1])][:, 3]
+                edge_time_set[tuple(e)] = times
+            self.edge_time_set = edge_time_set
+        else:
+            for d in range(data.shape[0]):
+                one_graph = data[d]
+                one_graph = one_graph[one_graph[:, 0] > -1]
+                tg = Create_Temporal_Graph(edges=one_graph, N=N, tmax=tmax,
+                                           edge_contact_time=edge_contact_time)
+                graph_list.append(tg)
+            self.graph_list = graph_list
+
+            data = data.reshape(-1, 3)
+            data = data[data[:, 0] > -1]
+            all_edges = np.unique(data[:, 0:2], axis=0)
+            edge_time_set = dict()
+            for e in all_edges:
+                times = data[(data[:, 1] == e[0]) & (data[:, 2] == e[1])][:, 2]
+                edge_time_set[tuple(e)] = times
+            self.edge_time_set = edge_time_set
+
+    def Sample_Average_Degree_Distribution(self):
+        sample_avg_degree = []
+        for one_graph in self.graph_list:
+            avg_degree = tc.degree_distribution(one_graph)
+            sample_avg_degree.append(avg_degree)
+        return np.array(sample_avg_degree)
+
+    def Mean_Average_Degree_Distribution(self):
+        return self.Sample_Average_Degree_Distribution().mean(axis=0)
+
+    def Edge_Counts(self):
+        return tc.edge_counts(self.graph_list[0])
+
+    def Sample_Mean_Degree(self):
+        sample_mean_degree = []
+        for one_graph in self.graph_list:
+            t, mean_k = tc.mean_degree(one_graph)
+            mean_degree = tc.time_average(t, mean_k, one_graph.tmax)
+            sample_mean_degree.append(mean_degree)
+        return np.array(sample_mean_degree)
+
+    def Mean_Mean_Degree(self):
+        return self.Sample_Mean_Degree().mean()
+
+    def Plot_Contact_Coverage(self):
+        fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+        for d in range(len(self.graph_list)):
+            try:
+                t, C = tc.contact_coverage(self.graph_list[d])
+                ax.scatter(t, C, c='blue', alpha=0.4)
+            except:
+                continue
+        plt.show()
+
+    def Sample_Average_Group_Size_Distribution(self):
+        sample_avg_size = []
+        for one_graph in self.graph_list:
+            try:
+                result = tc.measure_group_sizes_and_durations_for_edge_lists(one_graph)
+                mean_g = tc.mean_group_size(result)
+                # print('mean_g', mean_g)
+                sample_avg_size.append(mean_g)
+            except ValueError as e:
+                # print('error encounter: \n{} \n ignored!'.format(e))
+                continue
+        return np.array(sample_avg_size)
+
+    def Mean_Average_Group_Size_Distribution(self):
+        return self.Sample_Average_Group_Size_Distribution().mean()
+
+    def Sample_Mean_Group_Number(self):
+        sample_avg_number = []
+        for one_graph in self.graph_list:
+            try:
+                result = tc.measure_group_sizes_and_durations_for_edge_lists(one_graph)
+                mean_c = tc.mean_number_of_groups(result)
+                # print('mean_g', mean_g)
+                sample_avg_number.append(mean_c)
+            except ValueError as e:
+                # print('error encounter: \n{} \n ignored!'.format(e))
+                continue
+        return np.array(sample_avg_number)
+
+    def Mean_Mean_Group_Number(self):
+        return self.Sample_Mean_Group_Number().mean()
+
+    def Sample_Mean_Coordination_Number(self):
+        sample_avg_number = []
+        for one_graph in self.graph_list:
+            try:
+                result = tc.measure_group_sizes_and_durations_for_edge_lists(one_graph)
+                mean_c = tc.mean_coordination_number(result)
+                # print('mean_g', mean_g)
+                sample_avg_number.append(mean_c)
+            except ValueError as e:
+                # print('error encounter: \n{} \n ignored!'.format(e))
+                continue
+        return np.array(sample_avg_number)
+
+    def Mean_Mean_Coordination_Number(self):
+        return self.Sample_Mean_Coordination_Number().mean()
+
+    def Plot_Group_Size(self):
+        fig, ax = plt.subplots(1, 1)
+        for one_graph in self.graph_list:
+            try:
+                result = tc.measure_group_sizes_and_durations_for_edge_lists(one_graph)
+                plot_group_size_histogram(result, ax)
+            except:
+                continue
+        plt.show()
+
+    def Plot_Group_Duration(self):
+        fig, ax = plt.subplots(1, 1)
+        for one_graph in self.graph_list:
+            try:
+                result = tc.measure_group_sizes_and_durations_for_edge_lists(one_graph)
+                plot_group_durations(result, ax)
+            except:
+                continue
+        plt.show()
+
+    def Plot_one_node_social_trajectory(self, d, node):
+        one_graph = self.graph_list[d]
+        soc_traj = tc.social_trajectory(one_graph, node=node)
+        fig, ax = plt.subplots(1, 1, figsize=(4, 3))
+        plot_social_trajectory(soc_traj, ax, time_unit='s')
+        plt.show()
+
+def MMD_Average_Degree_Distribution(Gs, FGs):
+    return MMD(
+        Gs.Sample_Average_Degree_Distribution(),
+        FGs.Sample_Average_Degree_Distribution()
+    )
+
+def MMD_Mean_Degree(Gs, FGs):
+    return MMD(
+        Gs.Sample_Mean_Degree().reshape(-1, 1),
+        FGs.Sample_Mean_Degree().reshape(-1, 1)
+    )
+
+class Discrete_Graphs:
+    def __init__(self, data, N, time_interval, thres, is_real_graph):
+        self.paths = None
+        data[:, 3] = data[:, 3] / time_interval
+        # create one weighted graph
+        max_d = data[:, 0].max()
+        data = data.astype(int)
+        edge_list, edge_counts = np.unique(data[:, 1:4], return_counts=True, axis=0)
+        edge_list = np.c_[edge_list, (edge_counts / max_d).reshape(-1, 1)]
+        contact_list = edge_list
+
+        edge_list = [list(e) for e in edge_list]
+        tg = teneto.TemporalNetwork(from_edgelist=edge_list, N=N, nettype='wd')
+        self.tg = tg
+        print('check_input(tg)', teneto.utils.utils.check_input(tg))
+
+        contact_list = contact_list[contact_list[:, 3] >= thres]
+        contact_list = contact_list[:, 0:3].astype(int)
+        contact_list = [list(e) for e in contact_list]
+
+        contact = {
+            'contacts': contact_list,
+            'nettype': 'bd',
+            'netshape': (N, N, int(1./time_interval)),
+            't0': 0,
+            'nodelabels': [str(i+1) for i in range(N)],
+            'timeunit': 'unit',
+            'timetype': 'discrete',
+            'dimord': 'node,node,time',
+            'diagonal': 0
+        }
+        contact_tg = teneto.TemporalNetwork(from_dict=contact)
+        print('check_input(contact_tg)', teneto.utils.utils.check_input(contact_tg))
+        # print(np.array(list(map(list, contact['contacts']))))
+        self.contact_tg = contact_tg
+
+        graplet_tg = teneto.utils.contact2graphlet(contact)
+        self.graplet_tg = graplet_tg
+        # print('graplet_tg.network', self.graplet_tg)
+
+        # teneto.utils.binarize(contact, threshold_type='percent', threshold_level=0.1)
+        # binary_tg = teneto.utils.binarize(contact, threshold_type='percent', threshold_level=0.1)
+        binary_tg = teneto.TemporalNetwork(from_edgelist=contact_list, N=N, nettype='bd')
+        self.binary_tg = binary_tg
+
+
+        # if is_real_graph:
+        #     graph_list = []
+        #     for d in np.unique(data[:, 0]):
+        #         one_graph = Create_Discrete_Temporal_Graph(data[data[:, 0] == d][:, 1:], time_interval, N)
+        #         graph_list.append(one_graph)
+        #     self.graph_list = graph_list
+
+    # def Sample_Temporal_Degree_Centrality(self):
+    #     tdc = []
+    #     for one_graph in self.tg:
+    #         cent = teneto.networkmeasures.temporal_degree_centrality(one_graph, calc='avg')
+    #         tdc.append(cent)
+    #     return np.array(tdc)
+
+    @func_set_timeout(60)
+    def Get_Temporal_Shortest_Path(self):
+        self.paths = teneto.networkmeasures.shortest_temporal_path(tnet=self.graplet_tg)
+
+    # def Mean_Temporal_Degree_Centrality(self):
+    #     return teneto.networkmeasures.temporal_degree_centrality(self.tg, calc='avg')
+        # return self.Sample_Temporal_Degree_Centrality().mean(axis=0)
+
+    @func_set_timeout(60)
+    def Temporal_Degree_Centrality(self):
+        return teneto.networkmeasures.temporal_degree_centrality(self.tg, calc='avg')
+
+    @func_set_timeout(60)
+    def Temporal_Closeness_Centrality(self):
+         return teneto.networkmeasures.temporal_closeness_centrality(paths=self.paths)
+
+    @func_set_timeout(60)
+    def Temporal_Betweenness_Centrality(self):
+         return teneto.networkmeasures.temporal_betweenness_centrality(paths=self.paths)
+
+    @func_set_timeout(60)
+    def Topological_Overlap(self):
+        return teneto.networkmeasures.topological_overlap(self.tg, calc='node')
+
+    @func_set_timeout(60)
+    def Bursty_Coeff(self):
+        print(self.tg.network.shape)
+        print(self.tg.network)
+        return teneto.networkmeasures.bursty_coeff(
+            self.tg,
+            calc='node',
+            # threshold_type='percent',
+            # threshold_level=0.5
+        )
+
+    @func_set_timeout(60)
+    def Temporal_Efficiency(self):
+        return teneto.networkmeasures.temporal_efficiency(paths=self.paths, calc='global')
+
+def Plot_Discrete_Graph(one_graph, file_name, show=False):
+    one_graph.plot('slice_plot')
+    if show: plt.show()
+    plt.tight_layout()
+    plt.savefig('./outputs/{}.png'.format(file_name))
+    plt.close()
+
+def Create_Discrete_Temporal_Graph(edges, time_interval, N):
+    edges[:, 2] = edges[:, 2] / time_interval
+    edges = edges.astype(int)
+    edges = [list(e) for e in edges]
+    tn = teneto.TemporalNetwork(from_edgelist=edges, N=N, nettype='bd')
+    return tn
+
 
 if __name__ == "__main__":
 
     dataset = 'auth'
-
-    if dataset == 'auth': 
-        N = 28
-        user_id = 0
-        _it = 23000
-        fake_file = './outputs-auth-user-0/20191028-222439_assembled_graph_iter_{}.npz'.format(_it)
-    else: 
-        N = 91
-        user_id = 4
-        _it = 44000
-        fake_file = './outputs-metro-user-4/20191103-235308_assembled_graph_iter_{}.npz'.format(_it)
-
-    file = "data/{}_user_{}.txt".format(dataset, user_id)
-    edges = np.loadtxt(file)
-    t_end = 1.
     train_ratio = 0.9
-    output_directory = 'outputs-{}'.format(dataset)
-    if not os.path.isdir(output_directory):
-        os.makedirs(output_directory)
 
-    train_edges, test_edges = Split_Train_Test(edges, train_ratio)
+    if dataset == 'auth':
+        N = 27
+        l = 103
+        n_times = 4
+        user_id = 0
+        tmax = 1.0
+        edge_contact_time = 1e-4
+        time_interval = 1. / n_times
+        thres = 0.001
 
-    res = np.load(fake_file)
-    fake_graphs = res['fake_graphs']
-    real_walks = res['real_walks']
-    print('fake_graphs', fake_graphs.shape)
-    print('real_walks', real_walks.shape)
-    # save to matlab .mat data file
-    savemat(mdict={'fake_graphs': fake_graphs, 'real_walks': real_walks, 'train_edges':train_edges, 'test_edges':test_edges},
-    file_name='{}/{}_fake_graphs_iter_{}'.format(output_directory, dataset, _it))
+        _it = '20191231-204105_assembled_graph_iter_30000'
+        fake_file = './outputs-auth-user-0-best/{}.npz'.format(_it)
+        res = np.load(fake_file)
+        print('auth', res['fake_graphs'].shape)
+        scipy.io.savemat('./outputs-auth-user-0-best/20191028-222439_assembled_graph_iter_{}.mat'.format(_it),
+                         dict(fake_graphs=res['fake_graphs']))
+        fake_graphs = np.reshape(res['fake_graphs'], [-1, l, 3])
+        fake_graphs = fake_graphs[:10]
 
-    Time_Plot(fake_graphs, real_walks, train_edges, test_edges, N, t_end, output_directory, _it)
+        file_name = '{}_user_{}'.format(dataset, user_id)
+        file = "data/{}_user_{}.txt".format(dataset, user_id)
+        data = np.loadtxt('./data/{}_user_{}.txt'.format(dataset, user_id))
+        # data[:, 1:3] = data[:, 1:3] - 1
+
+    if dataset == 'metro':
+        N = 91
+        l = 4
+        n_times = 6
+        user_id = 4
+        tmax = 1.0
+        edge_contact_time = 0.02
+        time_interval = 1. / n_times
+        thres = 0.01
+
+        _it = 71000
+        fake_file = './outputs-metro-user-4-best/20191103-235308_assembled_graph_iter_{}.npz'.format(_it)
+        res = np.load(fake_file)
+        scipy.io.savemat('./outputs-metro-user-4-best/20191103-235308_assembled_graph_iter_{}.mat'.format(_it),
+                         dict(fake_graphs=res['fake_graphs']))
+        fake_graphs = np.reshape(res['fake_graphs'], [-1, l, 3])
+
+        file_name = '{}_user_{}'.format(dataset, user_id)
+        file = "data/{}_user_{}.txt".format(dataset, user_id)
+        data = np.loadtxt('./data/{}_user_{}.txt'.format(dataset, user_id))
+
+    if dataset == 'graphrnn_metro':
+        N = 91
+        l = 4
+        n_times = 6
+        user_id = 4
+        tmax = 1.0
+        edge_contact_time = 0.02
+        time_interval = 1. / 6
+        thres = 0.01
+
+        fake_file = 'outputs/generated_dataset/GRNN/RNN_metro/metrosample12_gen12.npy'
+        res = np.load(fake_file)
+        print('graphrnn res', res.shape)
+        print('graphrnn res', res.sum(axis=2).sum(axis=1).argmax())
+        print('graphrnn res col max', res[0].argmax(axis=0))
+        print('graphrnn res row max', res[0].argmax(axis=1))
+
+        file_name = '{}_user_{}'.format(dataset, user_id)
+        file = "data/{}_user_{}.txt".format(dataset, user_id)
+        data = np.loadtxt('./data/{}_user_{}.txt'.format(dataset, user_id))
+
+    if dataset == 'graphrnn_auth':
+        N = 27
+        l = 4
+        n_times = 4
+        user_id = 4
+        tmax = 1.0
+        edge_contact_time = 0.02
+        time_interval = 1. / n_times
+        thres = 0.01
+
+        fake_file = 'outputs/generated_dataset/GRNN/RNN_my/ij1.npy'
+        res = np.load(fake_file)
+        print('graphrnn res', res.shape)
+        print('graphrnn res', res.sum(axis=2).sum(axis=1).argmax())
+        print('graphrnn res col max', res[0].argmax(axis=0))
+        print('graphrnn res row max', res[0].argmax(axis=1))
+
+        file_name = '{}_user_{}'.format(dataset, user_id)
+        file = "data/{}_user_{}.txt".format(dataset, user_id)
+        data = np.loadtxt('./data/{}_user_{}.txt'.format(dataset, user_id))
+
+    save_directory = './evaluation_outputs'
+    if not os.path.isdir(save_directory):
+        os.makedirs(save_directory)
+
+    ### continuous time
+    Gs = Graphs(data, N, tmax, edge_contact_time, is_real_graph=True)
+    Plot_Graph(Gs.graph_list[n_times], '{}/{}'.format(save_directory, file_name))
+
+    # print('Real Mean_Average_Degree_Distribution:\n', Gs.Mean_Average_Degree_Distribution())
+    print('Real Mean_Degree:\n', Gs.Mean_Mean_Degree())
+    print('Real Mean_Average_Group_Size_Distribution:\n', Gs.Mean_Average_Group_Size_Distribution())
+    print('Real Mean_Average_Group_Number:\n', Gs.Mean_Mean_Group_Number())
+    print('Real Mean_Mean_Coordination_Number:\n', Gs.Mean_Mean_Coordination_Number())
+
+    FGs = Graphs(fake_graphs, N, tmax, edge_contact_time, is_real_graph=False)
+
+    # print('Fake Mean_Average_Degree_Distribution:\n', FGs.Mean_Average_Degree_Distribution())
+    print('Fake Mean_Degree:\n', FGs.Mean_Mean_Degree())
+    print('Fake Mean_Average_Group_Size_Distribution:\n', FGs.Mean_Average_Group_Size_Distribution())
+    print('Fake Mean_Average_Group_Number:\n', FGs.Mean_Mean_Group_Number())
+    print('Fake Mean_Mean_Coordination_Number:\n', FGs.Mean_Mean_Coordination_Number())
+
+    print('MMD_Average_Degree', MMD_Average_Degree_Distribution(Gs, FGs))
+    print('MMD_Mean_Degree', MMD_Mean_Degree(Gs, FGs))
+
+    Gs = Discrete_Graphs(data, N, time_interval, thres, is_real_graph=True)
+    # Plot_Discrete_Graph(Gs.tg, '{}_discrete_user_{}'.format(dataset, user_id))
+    print('3d network matrix of graplet representation', Gs.graplet_tg.shape)
+
+    try:
+        print('Temporal_Degree_Centrality\n', Gs.Temporal_Degree_Centrality())
+    except FunctionTimedOut:
+        print("Gs.Temporal_Degree_Centrality() could not complete within 60 seconds and was terminated.")
+    except Exception as e:
+        print('other error happened:\n{}'.format(e))
+    print('\n')
+
+    # start = time.clock()
+    # try:
+    #     Gs.Get_Temporal_Shortest_Path()
+    #     Gs.paths.to_csv('{}/{}_discrete_user_{}_shortest_path.csv'.format(save_directory, dataset, user_id))
+    #     print('paths', Gs.paths.shape)
+    # except FunctionTimedOut:
+    #     print("Gs.Get_Temporal_Shortest_Path() could not complete within 60 seconds and was terminated.")
+    # except Exception as e:
+    #     print('other error happened:\n{}'.format(e))
+    # end = time.clock()
+    # print('Get_Temporal_Shortest_Path() used time', end-start)
+    # print('\n')
+
+    # try:
+    #     print('Temporal_Betweenness_Centrality', Gs.Temporal_Betweenness_Centrality())
+    # except FunctionTimedOut:
+    #     print("Gs.Temporal_Betweenness_Centrality() could not complete within 60 seconds and was terminated.")
+    # except Exception as e:
+    #     print('other error happened:\n{}'.format(e))
+    # print('\n')
+    #
+    # try:
+    #     print('Temporal_Closeness_Centrality', Gs.Temporal_Closeness_Centrality())
+    # except FunctionTimedOut:
+    #     print("Gs.Temporal_Closeness_Centrality() could not complete within 60 seconds and was terminated.")
+    # except Exception as e:
+    #     print('other error happened:\n{}'.format(e))
+    # print('\n')
+
+    try:
+        print('Topological_Overlap', Gs.Topological_Overlap())
+    except FunctionTimedOut:
+        print("Gs.Topological_Overlap() could not complete within 60 seconds and was terminated.")
+    except Exception as e:
+        print('other error happened:\n{}'.format(e))
+    print('\n')
+
+    try:
+        print('Bursty_Coeff', Gs.Bursty_Coeff())
+    except FunctionTimedOut:
+        print("Gs.Bursty_Coeff() could not complete within 60 seconds and was terminated.")
+    except Exception as e:
+        print('other error happened:\n{}'.format(e))
+    print('\n')
+
+    # try:
+    #     print('Temporal_Efficiency', Gs.Temporal_Efficiency())
+    # except FunctionTimedOut:
+    #     print("Gs.Temporal_Efficiency() could not complete within 60 seconds and was terminated.")
+    # except Exception as e:
+    #     print('other error happened:\n{}'.format(e))
+    # print('\n')
+
+    print('finish execution!')
+
+
 
