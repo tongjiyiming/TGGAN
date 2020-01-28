@@ -51,10 +51,29 @@ def main(args):
         t_end = 1.
         gpu_id = 0
 
-        log('simulate data')
-        edges = multi_continuous_time_simulate(n_days, n_nodes)
-        edges = np.array(edges)
-        log('simulated data : \n{}'.format(edges))
+        max_iters = args.max_iters
+        eval_every =  args.eval_every
+        plot_every =  args.plot_every
+        transitions_per_iter = batch_size * n_eval_loop
+        eval_transitions = transitions_per_iter * 10
+        model_name = 'simulation-nodes-{}-samples-{}'.format(n_nodes, n_days)
+        save_directory = 'snapshots-nodes-{}-samples-{}'.format(n_nodes, n_days)
+        output_directory='outputs-nodes-{}-samples-{}'.format(n_nodes, n_days)
+        timing_directory='timings-nodes-{}-samples-{}'.format(n_nodes, n_days)
+        data_directory = 'data-nodes-{}-samples-{}'.format(n_nodes, n_days)
+        data_file = '{}/data-nodes-{}-samples-{}.txt'.format(data_directory, n_nodes, n_days)
+        if not os.path.isdir(data_directory):
+            os.mkdir(data_directory)
+
+        if not os.path.isfile(data_file):
+            log('simulate data')
+            edges = multi_continuous_time_simulate(n_days, n_nodes)
+            edges = np.array(edges)
+            log('simulated data : \n{}'.format(edges))
+            np.savetxt(data_file, edges)
+        else:
+            log('loading simulated data')
+            edges = np.loadtxt(data_file)
 
         train_edges, test_edges = Split_Train_Test(edges, train_ratio)
 
@@ -86,16 +105,6 @@ def main(args):
                       use_decoder=use_decoder,
                       constraint_method=constraint_method,
                       )
-
-        max_iters = args.max_iters
-        eval_every =  args.eval_every
-        plot_every =  args.plot_every
-        transitions_per_iter = batch_size * n_eval_loop
-        eval_transitions = transitions_per_iter * 10
-        model_name = 'simulation-nodes-{}-samples-{}'.format(n_nodes, n_days)
-        save_directory = 'snapshots-nodes-{}-samples-{}'.format(n_nodes, n_days)
-        output_directory='outputs-nodes-{}-samples-{}'.format(n_nodes, n_days)
-        timing_directory='timings-nodes-{}-samples-{}'.format(n_nodes, n_days)
 
         log_dict = tggan.train(
             train_edges=train_edges, test_edges=test_edges,

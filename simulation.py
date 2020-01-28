@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 import networkx as nx
+import random
 
 
 def discrete_time_simulation(n_nodes, n_times, prob, simProcess, ncontacts, lam, nettype):
@@ -27,7 +28,133 @@ def multi_discrete_time_simulate(n_days, n_nodes, n_times, prob, simProcess, nco
         ))
     return np.array(res_sim).reshape(-1, 4)
 
-def continuous_time_simulation(n_nodes, t0=0.1, tmax=1.0, mean_tau=0.05, mean_degree=1.5):
+
+def scale_free_graph(n, alpha=0.41, beta=0.54, gamma=0.05, delta_in=0.2,
+                     delta_out=0, create_using=None, seed=None, t0=0.01, t_max=1.0, mean_tau=0.05, edge_contact_time=0.02):
+    """Returns a scale-free directed graph.
+
+    Parameters
+    ----------
+    n : integer
+        Number of nodes in graph
+    alpha : float
+        Probability for adding a new node connected to an existing node
+        chosen randomly according to the in-degree distribution.
+    beta : float
+        Probability for adding an edge between two existing nodes.
+        One existing node is chosen randomly according the in-degree
+        distribution and the other chosen randomly according to the out-degree
+        distribution.
+    gamma : float
+        Probability for adding a new node conecgted to an existing node
+        chosen randomly according to the out-degree distribution.
+    delta_in : float
+        Bias for choosing ndoes from in-degree distribution.
+    delta_out : float
+        Bias for choosing ndoes from out-degree distribution.
+    create_using : graph, optional (default MultiDiGraph)
+        Use this graph instance to start the process (default=3-cycle).
+    seed : integer, optional
+        Seed for random number generator
+
+    Examples
+    --------
+    Create a scale-free graph on one hundred nodes::
+
+    Notes
+    -----
+    The sum of ``alpha``, ``beta``, and ``gamma`` must be 1.
+
+    References
+    ----------
+    .. [1] B. Bollobás, C. Borgs, J. Chayes, and O. Riordan,
+           Directed scale-free graphs,
+           Proceedings of the fourteenth annual ACM-SIAM Symposium on
+           Discrete Algorithms, 132--139, 2003.
+    """
+
+    def _choose_node(G, distribution, delta):
+        cumsum = 0.0
+        # normalization
+        psum = float(sum(distribution.values())) + float(delta) * len(distribution)
+        r = random.random()
+        for i in range(0, len(distribution)):
+            cumsum += (distribution[i] + delta) / psum
+            if r < cumsum:
+                break
+        return i
+
+    edge_lists = []
+    t = []
+    t_total = t0
+    if create_using is None:
+        # start with 3-cycle
+        G = nx.MultiDiGraph()
+        G.add_edges_from([(0, 1), (1, 2), (2, 0)])
+        edge_lists.append(list(G.edges()))
+        t.append(t_total)
+        edge_lists.append([])
+        t_total += edge_contact_time
+        t.append(t_total)
+    else:
+        # keep existing graph structure?
+        G = create_using
+        if not (G.is_directed() and G.is_multigraph()):
+            raise nx.NetworkXError( \
+                "MultiDiGraph required in create_using")
+
+    if alpha <= 0:
+        raise ValueError('alpha must be >= 0.')
+    if beta <= 0:
+        raise ValueError('beta must be >= 0.')
+    if gamma <= 0:
+        raise ValueError('beta must be >= 0.')
+
+    if alpha + beta + gamma != 1.0:
+        raise ValueError('alpha+beta+gamma must equal 1.')
+
+    G.name = "directed_scale_free_graph(%s,alpha=%s,beta=%s,gamma=%s,delta_in=%s,delta_out=%s)" % (
+    n, alpha, beta, gamma, delta_in, delta_out)
+
+    # seed random number generated (uses None as default)
+    random.seed(seed)
+
+    while len(G) < n:
+        r = np.random.exponential(scale=mean_tau)
+        # random choice in alpha,beta,gamma ranges
+        if r < alpha:
+            # alpha
+            # add new node v
+            v = len(G)
+            # choose w according to in-degree and delta_in
+            w = _choose_node(G, G.in_degree(), delta_in)
+        elif r < alpha + beta:
+            # beta
+            # choose v according to out-degree and delta_out
+            v = _choose_node(G, G.out_degree(), delta_out)
+            # choose w according to in-degree and delta_in
+            w = _choose_node(G, G.in_degree(), delta_in)
+        else:
+            # gamma
+            # choose v according to out-degree and delta_out
+            v = _choose_node(G, G.out_degree(), delta_out)
+            # add new node w
+            w = len(G)
+        G.add_edge(v, w)
+        t_total += r
+        edge_lists.append(list(G.edges()))
+        if t_total >= t_max:
+            t.append(t_max)
+            break
+        else:
+            t.append(t_total)
+            edge_lists.append([])
+            t_total += edge_contact_time
+            t.append(t_total)
+
+    return edge_lists, t
+
+def continuous_time_simulation(n_nodes, t0=0.01, t_max=1.0, mean_tau=0.05, mean_degree=1.5):
     # static structure parameters
     p = mean_degree / (n_nodes - 1.0)
 
@@ -36,14 +163,15 @@ def continuous_time_simulation(n_nodes, t0=0.1, tmax=1.0, mean_tau=0.05, mean_de
     t = []
     this_time = t0
 
-    while this_time < tmax:
-        G = nx.fast_gnp_random_graph(n_nodes, p)  # Generate a new random network
-        # G = nx.gnm_random_graph(N, M)  # Generate a Erdos Renyi network
-        # G = nx.barabasi_albert_graph(N, M) # Generate a Erdos Renyi network
-        these_edges = list(G.edges())
-        t.append(this_time)
-        edge_lists.append(these_edges)
-        this_time += np.random.exponential(scale=mean_tau)
+    edge_lists, t = scale_free_graph(n=n_nodes, t0=t0, t_max=t_max)
+    # while this_time < tmax:
+    #     G = nx.fast_gnp_random_graph(n_nodes, p)  # Generate a new random network
+    #     # G = nx.gnm_random_graph(N, M)  # Generate a Erdos Renyi network
+    #     # G = nx.barabasi_albert_graph(N, M) # Generate a Erdos Renyi network
+    #     these_edges = list(G.edges())
+    #     t.append(this_time)
+    #     edge_lists.append(these_edges)
+    #     this_time += np.random.exponential(scale=mean_tau)
 
     # save to _tacoma-object
     el = tc.edge_lists()
@@ -51,13 +179,13 @@ def continuous_time_simulation(n_nodes, t0=0.1, tmax=1.0, mean_tau=0.05, mean_de
     el.N = n_nodes
     el.t = t
     el.edges = edge_lists
-    el.tmax = tmax
+    el.tmax = t_max
     return el
 
-def multi_continuous_time_simulate(n_days, n_nodes, t0=0.1, tmax=1.0, mean_tau=0.05, mean_degree=1.5):
+def multi_continuous_time_simulate(n_days, n_nodes, t0=0.01, t_max=1.0, mean_tau=0.05, mean_degree=1.5):
     res_sim = []
     for d in range(n_days):
-        el = continuous_time_simulation(n_nodes, t0, tmax, mean_tau, mean_degree)
+        el = continuous_time_simulation(n_nodes, t0, t_max, mean_tau, mean_degree)
         for k in range(len(el.t)):
             t = el.t[k]
             for i, j in el.edges[k]:
@@ -68,6 +196,7 @@ if __name__ == "__main__":
     n_nodes = 5
     n_days = 3
     el = continuous_time_simulation(n_nodes)
+    print(list(zip(el.edges, el.t)))
 
     from tacoma.drawing import edge_activity_plot
 
@@ -80,7 +209,6 @@ if __name__ == "__main__":
     plt.show()
 
     edges = multi_continuous_time_simulate(n_days, n_nodes)
-    print(np.array(edges))
 
     # from pandas.compat.numpy import *
     # edges=np.array(np.loadtxt('edgeaa.txt'))

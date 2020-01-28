@@ -41,7 +41,7 @@ if __name__ == '__main__':
                         help="random walks batch size in DeepTemporalWalk")
     parser.add_argument("-lr", "--learningrate", default=0.0003, type=float,
                         help="if this run should run all evaluations")
-    parser.add_argument("-rl", "--rw_len", default=2, type=int,
+    parser.add_argument("-rl", "--rw_len", default=10, type=int,
                         help="random walks maximum length in DeepTemporalWalk")
     parser.add_argument("-uw", "--use_wgan", default=True, type=bool,
                         help="if use WGAN loss function")
@@ -55,31 +55,43 @@ if __name__ == '__main__':
                         help="time sampling number")
     parser.add_argument("-cm", "--constraint_method", default='min_max', type=str,
                         help="time constraint computing method")
-    parser.add_argument("-ne", "--n_eval_loop", default=4, type=int,
+    parser.add_argument("-ne", "--n_eval_loop", default=40, type=int,
                         help="number of walk loops")
 
-    parser.add_argument("-mi", "--max_iters", default=3000, type=int,
-                        help="max iterations")
-    parser.add_argument("-ev", "--eval_every", default=1000, type=int,
-                        help="evaluation interval of epochs")
-    parser.add_argument("-pe", "--plot_every", default=1000, type=int,
-                        help="plot generated graph interval of epochs")
-    # parser.add_argument("-mi", "--max_iters", default=2, type=int,
+    # parser.add_argument("-mi", "--max_iters", default=3000, type=int,
     #                     help="max iterations")
-    # parser.add_argument("-ev", "--eval_every", default=1, type=int,
+    # parser.add_argument("-ev", "--eval_every", default=3000, type=int,
     #                     help="evaluation interval of epochs")
-    # parser.add_argument("-pe", "--plot_every", default=1, type=int,
+    # parser.add_argument("-pe", "--plot_every", default=3000, type=int,
     #                     help="plot generated graph interval of epochs")
+    parser.add_argument("-mi", "--max_iters", default=2, type=int,
+                        help="max iterations")
+    parser.add_argument("-ev", "--eval_every", default=1, type=int,
+                        help="evaluation interval of epochs")
+    parser.add_argument("-pe", "--plot_every", default=1, type=int,
+                        help="plot generated graph interval of epochs")
+    parser.add_argument("-te", "--is_test", default=True, type=bool,
+                        help="if this is a testing period.")
 
     parser.add_argument("-ct", "--continueTraining", default=False, type=bool,
                         help="if this run is restored from a corrupted run")
 
     # run
     args = parser.parse_args()
-    for n_nodes in [20, 40, 60, 80]:
-        for n_days in [200, 400, 600, 800]:
-            args.numberNode = n_nodes
-            args.numberSamples = n_days
-            tf.compat.v1.reset_default_graph()
-            main(args)
-            log('finish execution')
+    # for n_nodes in [100, 300, 900, 2700]:
+    #     for n_days in [200, 400, 600, 800]:
+    #         args.numberNode = n_nodes
+    #         args.numberSamples = n_days
+    #         tf.compat.v1.reset_default_graph()
+    #         main(args)
+
+    if args.is_test:
+        node_list = [10]
+    else:
+        node_list = [100, 500, 2500]
+    for n_nodes in node_list:
+        args.numberNode = n_nodes
+        args.numberSamples = 1000
+        tf.compat.v1.reset_default_graph()
+        main(args)
+    log('finish execution')
