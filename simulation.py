@@ -1,3 +1,7 @@
+import matplotlib
+from networkx.utils import py_random_state
+
+matplotlib.use('Agg')
 from teneto import TemporalNetwork
 import tacoma as tc
 import teneto
@@ -6,6 +10,7 @@ import matplotlib.pyplot as plt
 import time
 import networkx as nx
 import random
+from evaluation import *
 
 
 def discrete_time_simulation(n_nodes, n_times, prob, simProcess, ncontacts, lam, nettype):
@@ -28,9 +33,8 @@ def multi_discrete_time_simulate(n_days, n_nodes, n_times, prob, simProcess, nco
         ))
     return np.array(res_sim).reshape(-1, 4)
 
-
-def scale_free_graph(n, alpha=0.41, beta=0.54, gamma=0.05, delta_in=0.2,
-                     delta_out=0, create_using=None, seed=None, t0=0.01, t_max=1.0, mean_tau=0.05, edge_contact_time=0.02):
+def scale_free_graph(n_nodes, t0, t_max, shape, scale, alpha=0.51, beta=0.44, gamma=0.05, delta_in=0.4,
+                     delta_out=0.1, create_using=None, seed=None, edge_contact_time=0.02):
     """Returns a scale-free directed graph.
 
     Parameters
@@ -73,16 +77,15 @@ def scale_free_graph(n, alpha=0.41, beta=0.54, gamma=0.05, delta_in=0.2,
            Discrete Algorithms, 132--139, 2003.
     """
 
-    def _choose_node(G, distribution, delta):
+    def _choose_node(G, distribution, delta, psum):
         cumsum = 0.0
         # normalization
-        psum = float(sum(distribution.values())) + float(delta) * len(distribution)
         r = random.random()
-        for i in range(0, len(distribution)):
-            cumsum += (distribution[i] + delta) / psum
+        for n, d in distribution:
+            cumsum += (d + delta) / psum
             if r < cumsum:
                 break
-        return i
+        return n
 
     edge_lists = []
     t = []
@@ -92,9 +95,10 @@ def scale_free_graph(n, alpha=0.41, beta=0.54, gamma=0.05, delta_in=0.2,
         G = nx.MultiDiGraph()
         G.add_edges_from([(0, 1), (1, 2), (2, 0)])
         edge_lists.append(list(G.edges()))
-        t.append(t_total)
+        # t.append(t_total)
+
+        t.append(t_total - edge_contact_time)
         edge_lists.append([])
-        t_total += edge_contact_time
         t.append(t_total)
     else:
         # keep existing graph structure?
@@ -113,57 +117,72 @@ def scale_free_graph(n, alpha=0.41, beta=0.54, gamma=0.05, delta_in=0.2,
     if alpha + beta + gamma != 1.0:
         raise ValueError('alpha+beta+gamma must equal 1.')
 
-    G.name = "directed_scale_free_graph(%s,alpha=%s,beta=%s,gamma=%s,delta_in=%s,delta_out=%s)" % (
-    n, alpha, beta, gamma, delta_in, delta_out)
+    G.name = "directed_scale_free_graph(alpha=%s,beta=%s,gamma=%s,delta_in=%s,delta_out=%s)" % (
+    alpha, beta, gamma, delta_in, delta_out)
 
     # seed random number generated (uses None as default)
     random.seed(seed)
 
-    while len(G) < n:
-        r = np.random.exponential(scale=mean_tau)
+    number_of_edges = G.number_of_edges()
+    while t_total < t_max and len(G) < n_nodes:
+        psum_in = number_of_edges + delta_in * len(G)
+        psum_out = number_of_edges + delta_out * len(G)
+        # r = np.random.gamma(shape=shape, scale=scale)
+        r = random.random()
+        t_total += r
+
+        if t_total >= t_max:
+            break
         # random choice in alpha,beta,gamma ranges
         if r < alpha:
             # alpha
             # add new node v
             v = len(G)
+            # v = np.random.choice(range(len(G), n_nodes-1))
+
             # choose w according to in-degree and delta_in
-            w = _choose_node(G, G.in_degree(), delta_in)
+            w = _choose_node(G, G.in_degree(), delta_in, psum_in)
         elif r < alpha + beta:
             # beta
             # choose v according to out-degree and delta_out
-            v = _choose_node(G, G.out_degree(), delta_out)
+            v = _choose_node(G, G.out_degree(), delta_out, psum_out)
             # choose w according to in-degree and delta_in
-            w = _choose_node(G, G.in_degree(), delta_in)
+            w = _choose_node(G, G.in_degree(), delta_in, psum_in)
         else:
             # gamma
             # choose v according to out-degree and delta_out
-            v = _choose_node(G, G.out_degree(), delta_out)
+            v = _choose_node(G, G.out_degree(), delta_out, psum_out)
             # add new node w
             w = len(G)
-        G.add_edge(v, w)
-        t_total += r
-        edge_lists.append(list(G.edges()))
-        if t_total >= t_max:
-            t.append(t_max)
-            break
-        else:
-            t.append(t_total)
-            edge_lists.append([])
-            t_total += edge_contact_time
-            t.append(t_total)
+            # w = np.random.choice(range(len(G), n_nodes-1))
+        number_of_edges += 1
 
+        G.add_edge(v, w)
+        edge_lists.append([(v, w)])
+        # t.append(t_max)
+        # t.append(t_total)
+
+        t.append(t_total - edge_contact_time)
+        edge_lists.append([])
+        t.append(t_total)
+    # print(t_max, t)
+    t = [i / t_max for i in t]
     return edge_lists, t
 
-def continuous_time_simulation(n_nodes, t0=0.01, t_max=1.0, mean_tau=0.05, mean_degree=1.5):
-    # static structure parameters
-    p = mean_degree / (n_nodes - 1.0)
+def continuous_time_simulation(n_nodes, t0, t_max, shape, scale, edge_contact_time,
+                               alpha, beta, gamma, delta_in, delta_out, mean_degree=1.5):
+    # # static structure parameters
+    # p = mean_degree / (n_nodes - 1.0)
 
     # temporal parameters
     edge_lists = []
     t = []
     this_time = t0
 
-    edge_lists, t = scale_free_graph(n=n_nodes, t0=t0, t_max=t_max)
+    edge_lists, t = scale_free_graph(n_nodes, t0=t0, t_max=t_max, shape=shape, scale=scale,
+                                     edge_contact_time=edge_contact_time,
+                                     alpha=alpha, beta=beta, gamma=gamma,
+                                     delta_in=delta_in, delta_out=delta_out)
     # while this_time < tmax:
     #     G = nx.fast_gnp_random_graph(n_nodes, p)  # Generate a new random network
     #     # G = nx.gnm_random_graph(N, M)  # Generate a Erdos Renyi network
@@ -171,44 +190,78 @@ def continuous_time_simulation(n_nodes, t0=0.01, t_max=1.0, mean_tau=0.05, mean_
     #     these_edges = list(G.edges())
     #     t.append(this_time)
     #     edge_lists.append(these_edges)
-    #     this_time += np.random.exponential(scale=mean_tau)
+    #     this_time += np.random.exponential(scale=scale)
 
     # save to _tacoma-object
     el = tc.edge_lists()
-
     el.N = n_nodes
     el.t = t
     el.edges = edge_lists
     el.tmax = t_max
-    return el
+    res_sim = []
+    for k in range(len(el.t)):
+        t = el.t[k]
+        # print('el.t[k]', el.t[k])
+        # print('el.edges[k]', el.edges[k])
+        for i, j in el.edges[k]:
+            res_sim.append([i, j, t])
+    return res_sim, el
 
-def multi_continuous_time_simulate(n_days, n_nodes, t0=0.01, t_max=1.0, mean_tau=0.05, mean_degree=1.5):
+def multi_continuous_time_simulate(n_nodes, n_days, t0=0.1, t_max=10.0, shape=1.5, scale=0.2, edge_contact_time=0.02,
+                                   alpha=0.51, beta=0.44, gamma=0.05, delta_in=0.4, delta_out=0.1, mean_degree=1.5):
     res_sim = []
     for d in range(n_days):
-        el = continuous_time_simulation(n_nodes, t0, t_max, mean_tau, mean_degree)
-        for k in range(len(el.t)):
-            t = el.t[k]
-            for i, j in el.edges[k]:
-                res_sim.append([d, i, j, t])
-    return res_sim
+        d_res, el = continuous_time_simulation(n_nodes, t0, t_max, shape, scale, edge_contact_time=edge_contact_time,
+                                     alpha=alpha, beta=beta, gamma=gamma,
+                                     delta_in=delta_in, delta_out=delta_out, mean_degree=mean_degree)
+        for e in d_res:
+            res_sim.append([d] + e)
+    return np.array(res_sim)
 
 if __name__ == "__main__":
-    n_nodes = 5
-    n_days = 3
-    el = continuous_time_simulation(n_nodes)
-    print(list(zip(el.edges, el.t)))
-
+    from evaluation import *
     from tacoma.drawing import edge_activity_plot
 
-    edge_activity_plot(el,
-                       time_normalization_factor=1.,
-                       time_unit='h',
-                       alpha=1.0,  # opacity
-                       linewidth=1.5,
-                       )
-    plt.show()
+    N = 5
+    t0 = 0.2
+    edges, el = continuous_time_simulation(n_nodes=N, t0=t0, t_max=N, shape=1., scale=1., edge_contact_time=t0*0.5,
+                                    alpha=0.23, beta=0.54, gamma=0.23, delta_in=0.2, delta_out=0.)
+    print('one graph:\n', edges)
 
-    edges = multi_continuous_time_simulate(n_days, n_nodes)
+    tn_graph = Create_Discrete_Temporal_Graph(np.array(edges), 1./4, N)
+
+    fig, ax = plt.subplots(1, 2, figsize=(7, 3))
+    fig.subplots_adjust(bottom=0.3)
+
+    edge_activity_plot(el,
+                       ax=ax[0],
+                       time_normalization_factor=1.,
+                       time_unit='s',
+                       alpha=1.0,  # opacity
+                       linewidth=3.5,
+                       )
+
+    tn_graph.plot('slice_plot', ax=ax[1], cmap='Pastel2')
+    # tn_graph.plot('circle_plot', ax=ax[1], cmap='Pastel2')
+    # tn_graph.plot('graphlet_stack_plot', ax=ax[1], cmap='Greys')
+
+    # ax[0].annotate('Continuou-time plot', xy=(0.4, -2), fontsize=18)
+    ax[0].set_title(r'$\bf{a)}$ Continuou time graph', y=-0.5, fontsize=14)
+    ax[0].set_xlim([0., 1.])
+    ax[1].set_title(r'$\bf{b)}$ Time snapshots graph', y=-0.5, fontsize=14)
+    ax[1].set_xlabel('snapshots [0.25s per snapshot]')
+    ax[1].set_ylabel('node id')
+    plt.show()
+    # plt.savefig('example.png', dpi=120)
+    # plt.close()
+
+    N = 10
+    t0 = 0.2
+    edges = multi_continuous_time_simulate(n_days=100, n_nodes=N, t0=0.1, t_max=N*2, scale=0.7,
+                                         edge_contact_time=t0*0.5, alpha=0.13, beta=0.14, gamma=0.73,
+                                         delta_in=0.2, delta_out=0.)
+    Gs = Graphs(edges, N, tmax=1.0, edge_contact_time=t0*0.8)
+    print('Mean_Average_Degree_Distribution', Gs.Mean_Average_Degree_Distribution())
 
     # from pandas.compat.numpy import *
     # edges=np.array(np.loadtxt('edgeaa.txt'))

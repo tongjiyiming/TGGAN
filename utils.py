@@ -232,30 +232,61 @@ def plot_edge_time_hist(edge_dict, t0, tmax, bins, ymax, save_file=None, show=Tr
     if save_file: plt.savefig(save_file)
     if show: plt.show()
 
+def convert_graphs(fake_graphs):
+    _, _, e, k = fake_graphs.shape
+    fake_graphs = fake_graphs.reshape([-1, e, k])
+    tmp_list = None
+    for d in range(fake_graphs.shape[0]):
+        d_graph = fake_graphs[d]
+        d_graph = d_graph[d_graph[:, 2] > 0.]
+        d_graph = np.c_[np.array([[d]] * d_graph.shape[0]), d_graph]
+        if tmp_list is None:
+            tmp_list = d_graph
+        else:
+            tmp_list = np.r_[tmp_list, d_graph]
+    return tmp_list
 
 if __name__ == '__main__':
 
-    scale = 0.1
-    rw_len = 2
-    batch_size = 8
-    train_ratio = 0.9
+    # scale = 0.1
+    # rw_len = 2
+    # batch_size = 8
+    # train_ratio = 0.9
+    #
+    # # random data from metro
+    # file = 'data/auth_user_0.txt'
+    # edges = np.loadtxt(file)
+    # n_nodes = int(edges[:, 1:3].max() + 1)
+    # print(edges)
+    # print('n_nodes', n_nodes)
+    # t_end = 1.
+    # train_edges, test_edges = Split_Train_Test(edges, train_ratio)
+    # # print('train shape:', train_edges.shape)
+    # # print('test shape:', test_edges.shape)
+    # walker = TemporalWalker(n_nodes, train_edges, t_end,
+    #                         scale, rw_len, batch_size,
+    #                         init_walk_method='uniform',
+    #                         )
+    #
+    # walks = walker.walk().__next__()
+    # print('walk length:', rw_len)
+    # print('walks shape:\n', walks.shape)
+    # print('walks:\n', walks)
 
-    # random data from metro
-    file = 'data/auth_user_0.txt'
-    edges = np.loadtxt(file)
-    n_nodes = int(edges[:, 1:3].max() + 1)
-    print(edges)
-    print('n_nodes', n_nodes)
-    t_end = 1.
-    train_edges, test_edges = Split_Train_Test(edges, train_ratio)
-    # print('train shape:', train_edges.shape)
-    # print('test shape:', test_edges.shape)
-    walker = TemporalWalker(n_nodes, train_edges, t_end,
-                            scale, rw_len, batch_size,
-                            init_walk_method='uniform',
-                            )
+    # _it = '20191231-204105_assembled_graph_iter_30000'
+    # fake_file = './outputs-auth-user-0-best/{}.npz'.format(_it)
+    # res = np.load(fake_file)
+    # fake_graphs = res['fake_graphs'][:2]
+    # fake_graphs = convert_graphs(fake_graphs)
+    # print('fake_graphs', fake_graphs.shape)
+    # print(fake_graphs)
+    # real_walks = res['fake_graphs']
+    # np.savez_compressed(fake_file, fake_graphs=fake_graphs, real_walks=real_walks)
 
-    walks = walker.walk().__next__()
-    print('walk length:', rw_len)
-    print('walks shape:\n', walks.shape)
-    print('walks:\n', walks)
+    _it = '20200129-001952_assembled_graph_iter_2'
+    fake_file = './outputs-nodes-10-samples-1000/{}.npz'.format(_it)
+    res = np.load(fake_file)
+    fake_graphs = res['fake_graphs']
+    print('fake_graphs', fake_graphs[fake_graphs[:, 0] < 3])
+
+    print()

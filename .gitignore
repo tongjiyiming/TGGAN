@@ -6,7 +6,7 @@ snapshots*
 timings*
 evaluation_outputs/
 graph/
-data-nodes*
+example.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

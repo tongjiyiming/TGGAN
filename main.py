@@ -16,25 +16,27 @@ from utils import *
 from tggan import *
 
 # main run
-def main(args):
+def run(args):
     log('running argument')
     log(args)
     model = args.model
     dataset_name = args.dataset
     log('model: {}'.format(model))
 
-    if dataset_name == 'simulation':
-        file = args.file
+    if 'simulation' in dataset_name:
         n_times = args.numberTime
         n_nodes = args.numberNode
         n_days = args.numberSamples
         simProcess = args.simProcess
         prob = args.probability
+        early_stopping = args.early_stopping
+        is_test = args.is_test
+        if 'scale' in dataset_name:
+            simulation_type = 'scale-free'
+        elif 'epidemic' in dataset_name:
+            simulation_type = 'epidemic'
 
         scale = args.scale
-        rw_len = args.rw_len
-        batch_size = args.batch_size
-
         lr = args.learningrate
         continue_training = args.continueTraining
         use_wgan = args.use_wgan
@@ -42,10 +44,14 @@ def main(args):
         constraint_method = args.constraint_method
         time_deconv = args.time_deconv
         time_sample_num = args.time_sample_num
+        t0 = 0.1
+        edge_contact_time = t0*0.5
+        t_max = args.t_max
         n_eval_loop = args.n_eval_loop
         embedding_size = args.embedding_size
         rw_len = args.rw_len
         batch_size = args.batch_size
+        init_walk_method = args.init_walk_method
 
         train_ratio = 0.8
         t_end = 1.
@@ -56,35 +62,37 @@ def main(args):
         plot_every =  args.plot_every
         transitions_per_iter = batch_size * n_eval_loop
         eval_transitions = transitions_per_iter * 10
-        model_name = 'simulation-nodes-{}-samples-{}'.format(n_nodes, n_days)
-        save_directory = 'snapshots-nodes-{}-samples-{}'.format(n_nodes, n_days)
-        output_directory='outputs-nodes-{}-samples-{}'.format(n_nodes, n_days)
-        timing_directory='timings-nodes-{}-samples-{}'.format(n_nodes, n_days)
-        data_directory = 'data-nodes-{}-samples-{}'.format(n_nodes, n_days)
-        data_file = '{}/data-nodes-{}-samples-{}.txt'.format(data_directory, n_nodes, n_days)
-        if not os.path.isdir(data_directory):
-            os.mkdir(data_directory)
+        prefix = '{}-nodes-{}-samples-{}'.format(simulation_type, n_nodes, n_days)
+        model_name = 'simulation-'.format(n_nodes, n_days)
+        save_directory = 'snapshots-{}'.format(prefix)
+        output_directory='outputs-{}'.format(prefix)
+        timing_directory='timings-{}'.format(prefix)
+        simulate_data_directory = 'data-{}'.format(prefix)
+        simulate_data_file = '{}/{}.txt'.format(simulate_data_directory, simulate_data_directory)
 
-        if not os.path.isfile(data_file):
-            log('simulate data')
-            edges = multi_continuous_time_simulate(n_days, n_nodes)
-            edges = np.array(edges)
+        if not os.path.isdir(simulate_data_directory):
+            os.mkdir(simulate_data_directory)
+        if not os.path.isfile(simulate_data_file):
+            log('simulate synthetic data, save in {}'.format(simulate_data_file))
+            edges = multi_continuous_time_simulate(
+                n_days=n_days, n_nodes=n_nodes, t0=t0, t_max=t_max, mean_tau=1., edge_contact_time=edge_contact_time,
+                alpha=0.33, beta=0.34, gamma=0.33, delta_in=0.2, delta_out=0.0)
+            np.savetxt(simulate_data_file, edges)
             log('simulated data : \n{}'.format(edges))
-            np.savetxt(data_file, edges)
         else:
-            log('loading simulated data')
-            edges = np.loadtxt(data_file)
+            edges = np.loadtxt(simulate_data_file)
+            log('load simulated data from {}: \n{}'.format(simulate_data_file, edges))
 
         train_edges, test_edges = Split_Train_Test(edges, train_ratio)
 
-
         walker = TemporalWalker(n_nodes, train_edges, t_end,
                                 scale, rw_len, batch_size,
-                                init_walk_method='uniform',
+                                init_walk_method=init_walk_method,
                                 )
 
         tggan = TGGAN(N=n_nodes, rw_len=rw_len,
                       t_end=t_end,
+                      edge_contact_time=edge_contact_time,
                       walk_generator=walker.walk, batch_size=batch_size, gpu_id=gpu_id,
                       noise_type="Gaussian",
                       disc_iters=3,
@@ -109,7 +117,8 @@ def main(args):
         log_dict = tggan.train(
             train_edges=train_edges, test_edges=test_edges,
             n_eval_loop=n_eval_loop,
-            stopping=None,
+            early_stopping=early_stopping,
+            is_test=is_test,
             eval_transitions=eval_transitions,
             eval_every=eval_every, plot_every=plot_every,
             max_patience=20, max_iters=max_iters,
@@ -140,25 +149,40 @@ def main(args):
         time_deconv = args.time_deconv
         time_sample_num = args.time_sample_num
         n_eval_loop = args.n_eval_loop
+        early_stopping = args.early_stopping
+        edge_contact_time = args.contact_time
+        is_test = args.is_test
 
         # random data from metro
         userid = args.userid
-        file = args.file
+        file = file = 'data/auth_user_{}.txt'.format(userid)
         edges = np.loadtxt(file)
         embedding_size = args.embedding_size
         rw_len = args.rw_len
         batch_size = args.batch_size
+        init_walk_method = args.init_walk_method
+
+        max_iters = args.max_iters
+        eval_every =  args.eval_every
+        plot_every =  args.plot_every
+        transitions_per_iter = batch_size * n_eval_loop
+        eval_transitions = transitions_per_iter * 10
+        model_name = 'auth-user-{}'.format(userid)
+        save_directory = "snapshots-auth-user-{}".format(userid)
+        output_directory='outputs-auth-user-{}'.format(userid)
+        timing_directory='timings-auth-user-{}'.format(userid)
 
         train_edges, test_edges = Split_Train_Test(edges, train_ratio)
 
 
         walker = TemporalWalker(n_nodes, train_edges, t_end,
                                 scale, rw_len, batch_size,
-                                init_walk_method='uniform',
+                                init_walk_method=init_walk_method,
                                 )
 
         tggan = TGGAN(N=n_nodes, rw_len=rw_len,
                       t_end=t_end,
+                      edge_contact_time=edge_contact_time,
                       walk_generator=walker.walk, batch_size=batch_size, gpu_id=gpu_id,
                       noise_type="Gaussian",
                       disc_iters=3,
@@ -180,20 +204,11 @@ def main(args):
                       constraint_method=constraint_method,
                       )
 
-        max_iters = args.max_iters
-        eval_every =  args.eval_every
-        plot_every =  args.plot_every
-        transitions_per_iter = batch_size * n_eval_loop
-        eval_transitions = transitions_per_iter * 10
-        model_name = 'auth-user-{}'.format(userid)
-        save_directory = "snapshots-auth-user-{}".format(userid)
-        output_directory='outputs-auth-user-{}'.format(userid)
-        timing_directory='timings-auth-user-{}'.format(userid)
-
         log_dict = tggan.train(
             train_edges=train_edges, test_edges=test_edges,
             n_eval_loop=n_eval_loop,
-            stopping=None,
+            early_stopping=early_stopping,
+            is_test=is_test,
             eval_transitions=eval_transitions,
             eval_every=eval_every, plot_every=plot_every,
             max_patience=20, max_iters=max_iters,
@@ -224,24 +239,38 @@ def main(args):
         time_deconv = args.time_deconv
         time_sample_num = args.time_sample_num
         n_eval_loop = args.n_eval_loop
+        early_stopping = args.early_stopping
+        edge_contact_time = args.contact_time
+        is_test = args.is_test
 
         # random data from metro
         userid = args.userid
-        file = args.file
+        file = 'data/metro_user_{}.txt'.format(userid)
         edges = np.loadtxt(file)
         embedding_size = args.embedding_size
         rw_len = args.rw_len
         batch_size = args.batch_size
+        init_walk_method = args.init_walk_method
 
+        max_iters = args.max_iters
+        eval_every =  args.eval_every
+        plot_every =  args.plot_every
+        transitions_per_iter = batch_size * n_eval_loop
+        eval_transitions = transitions_per_iter * 100
+        model_name = 'metro-user-{}'.format(userid)
+        save_directory = "snapshots-metro-user-{}".format(userid)
+        output_directory='outputs-metro-user-{}'.format(userid)
+        timing_directory='timings-metro-user-{}'.format(userid)
         train_edges, test_edges = Split_Train_Test(edges, train_ratio)
 
         walker = TemporalWalker(n_nodes, train_edges, t_end,
                                 scale, rw_len, batch_size,
-                                init_walk_method='uniform',
+                                init_walk_method=init_walk_method,
                                 )
 
         tggan = TGGAN(N=n_nodes, rw_len=rw_len,
                       t_end=t_end,
+                      edge_contact_time=edge_contact_time,
                       walk_generator=walker.walk, batch_size=batch_size, gpu_id=gpu_id,
                       noise_type="Gaussian",
                       disc_iters=3,
@@ -265,20 +294,11 @@ def main(args):
                       constraint_method=constraint_method,
                       )
 
-        max_iters = args.max_iters
-        eval_every =  args.eval_every
-        plot_every =  args.plot_every
-        transitions_per_iter = batch_size * n_eval_loop
-        eval_transitions = transitions_per_iter * 100
-        model_name = 'metro-user-{}'.format(userid)
-        save_directory = "snapshots-metro-user-{}".format(userid)
-        output_directory='outputs-metro-user-{}'.format(userid)
-        timing_directory='timings-metro-user-{}'.format(userid)
-
         log_dict = tggan.train(
             train_edges=train_edges, test_edges=test_edges,
             n_eval_loop=n_eval_loop,
-            stopping=None,
+            early_stopping=early_stopping,
+            is_test=is_test,
             eval_transitions=eval_transitions,
             eval_every=eval_every, plot_every=plot_every,
             max_patience=20, max_iters=max_iters,

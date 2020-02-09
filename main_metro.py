@@ -14,13 +14,15 @@ if __name__ == '__main__':
                         help="one of: {}".format(", ".join(sorted(models))))
     parser.add_argument("-re", "--runEvaluation", default=False, type=bool,
                         help="if this run should run all evaluations")
+
     datasets = ['simulation', 'metro', 'auth']
     parser.add_argument("-d", "--dataset", default="metro", type=str,
                         help="one of: {}".format(", ".join(sorted(datasets))))
-    parser.add_argument("-ui", "--userid", default=0, type=int,
+    parser.add_argument("-ui", "--userid", default=4, type=int,
                         help="one of: {}".format(", ".join(sorted(datasets))))
-    parser.add_argument("-f", "--file", default="data/auth_user_0.txt", type=str,
-                        help="file path of data in format [[d, i, j, t], ...]")
+    # parser.add_argument("-f", "--file", default="data/auth_user_0.txt", type=str,
+    #                     help="file path of data in format [[d, i, j, t], ...]")
+
     processes = ['rand_binomial', 'rand_poisson']
     parser.add_argument("-sp", "--simProcess", default="rand_binomial", type=str,
                         help="one of: {}".format(", ".join(sorted(processes))))
@@ -33,6 +35,8 @@ if __name__ == '__main__':
 
     parser.add_argument("-sc", "--scale", default=0.1, type=float,
                         help="scale of gaussian prior for kernel density estimation in DeepTemporalWalk")
+    parser.add_argument("-iw", "--init_walk_method", default='uniform', type=str,
+                        help="TemporalWalk sampler")
 
     # DeepTemporalWalk
     parser.add_argument("-bs", "--batch_size", default=32, type=int,
@@ -56,23 +60,31 @@ if __name__ == '__main__':
     parser.add_argument("-ne", "--n_eval_loop", default=4, type=int,
                         help="number of walk loops")
 
-    parser.add_argument("-mi", "--max_iters", default=100000, type=int,
-                        help="max iterations")
-    parser.add_argument("-ev", "--eval_every", default=1000, type=int,
-                        help="evaluation interval of epochs")
-    parser.add_argument("-pe", "--plot_every", default=1000, type=int,
-                        help="plot generated graph interval of epochs")
-    # parser.add_argument("-mi", "--max_iters", default=2, type=int,
+    # parser.add_argument("-mi", "--max_iters", default=100000, type=int,
     #                     help="max iterations")
-    # parser.add_argument("-ev", "--eval_every", default=1, type=int,
+    # parser.add_argument("-ev", "--eval_every", default=1000, type=int,
     #                     help="evaluation interval of epochs")
-    # parser.add_argument("-pe", "--plot_every", default=1, type=int,
+    # parser.add_argument("-pe", "--plot_every", default=1000, type=int,
     #                     help="plot generated graph interval of epochs")
 
+    parser.add_argument("-mi", "--max_iters", default=1, type=int,
+                        help="max iterations")
+    parser.add_argument("-ev", "--eval_every", default=1, type=int,
+                        help="evaluation interval of epochs")
+    parser.add_argument("-pe", "--plot_every", default=1, type=int,
+                        help="plot generated graph interval of epochs")
+
+
+    parser.add_argument("-te", "--is_test", default=False, type=bool,
+                        help="if this is a testing period.")
+    parser.add_argument("--contact_time", default=0.001, type=float,
+                        help="stop training if evaluation metrics are good enough")
+    parser.add_argument("--early_stopping", default=1e-6, type=float,
+                        help="stop training if evaluation metrics are good enough")
     parser.add_argument("-ct", "--continueTraining", default=False, type=bool,
                         help="if this run is restored from a corrupted run")
 
     # run
     args = parser.parse_args()
-    main(args)
+    run(args)
     log('finish execution')
