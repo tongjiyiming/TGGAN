@@ -6,6 +6,7 @@ snapshots*
 timings*
 evaluation_outputs/
 graph/
+timing_results/
 example.png
 
 # Byte-compiled / optimized / DLL files

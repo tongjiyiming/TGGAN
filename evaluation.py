@@ -1056,10 +1056,10 @@ def get_real_graph_data(data_name):
         real_graphs = np.loadtxt('./{}/{}.txt'.format(name, name))
     elif 'scale-free-nodes-500' in data_name:
         name = 'data-scale-free-nodes-500-samples-100'
-        real_graphs = np.loadtxt('./{}/{}-old.txt'.format(name, name))
+        real_graphs = np.loadtxt('./{}/{}.txt'.format(name, name))
     elif 'scale-free-nodes-2500' in data_name:
         name = 'data-scale-free-nodes-2500-samples-100'
-        real_graphs = np.loadtxt('./{}/{}-old.txt'.format(name, name))
+        real_graphs = np.loadtxt('./{}/{}.txt'.format(name, name))
     return real_graphs
 
 
@@ -1132,10 +1132,18 @@ def get_fake_graph_data(dataset):
             fake_file = './{}/{}.npz'.format(dir, _it)
 
         res = np.load(fake_file)
-        scipy.io.savemat('./{}/{}.mat'.format(dir, matlab_file),
-                         dict(fake_graphs=res['fake_graphs']))
-        fake_graphs = res['fake_graphs']
-        print(dataset, fake_graphs.shape)
+        print(list(res.keys()))
+        if dataset == 'tggan_auth':
+            fake_graphs = scipy.io.loadmat('./{}/{}.mat'.format(dir, matlab_file))
+            fake_graphs = fake_graphs['fake_graphs'][:10]
+            print('fake_graphs', fake_graphs.shape)
+            fake_graphs = convert_graphs(fake_graphs)
+            fake_graphs[:, 3] = 1. - fake_graphs[:, 3]
+        else:
+            scipy.io.savemat('./{}/{}.mat'.format(dir, matlab_file),
+                             dict(fake_graphs=res['fake_graphs']))
+            fake_graphs = res['fake_graphs']
+        print(dataset, fake_graphs)
 
     if 'graphrnn' in dataset or 'graphvae' in dataset:
         if 'auth' in dataset:
@@ -1147,10 +1155,7 @@ def get_fake_graph_data(dataset):
             time_interval = 1. / n_times
             thres = 0.01
             n_samples = 2000
-            if 'graphrnn' in dataset:
-                fake_file = 'baselines/outputs/GraphRNN_RNN_auth_epoch_3000.txt'
-            if 'graphvae' in dataset:
-                fake_file = 'baselines/outputs/GraphRNN_VAE_conditional_auth_epoch_3000.txt'
+            fake_file = 'baselines/outputs/GraphRNN_RNN_auth_epoch_3000.txt'
         elif 'metro' in dataset:
             N = 91
             l = 4
@@ -1160,10 +1165,7 @@ def get_fake_graph_data(dataset):
             time_interval = 1. / 6
             thres = 0.01
             n_samples = 2000
-            if 'graphrnn' in dataset:
-                fake_file = 'baselines/outputs/GraphRNN_RNN_metro_epoch_3000.txt'
-            if 'graphvae' in dataset:
-                fake_file = 'baselines/outputs/GraphRNN_VAE_conditional_metro_epoch_3000.txt'
+            fake_file = 'baselines/outputs/GraphRNN_RNN_metro_epoch_3000.txt'
         elif 'scale-free-nodes-100' in dataset:
             N = 100
             l = 4
@@ -1173,40 +1175,9 @@ def get_fake_graph_data(dataset):
             time_interval = 1. / n_times
             thres = 0.01
             n_samples = 2000
-            if 'graphrnn' in dataset:
-                _it = 'GraphRNN_RNN_simulation_nodes_100_samples_200_epoch_3000'
-            if 'graphvae' in dataset:
-                _it = 'GraphRNN_VAE_simulation_nodes_100_samples_200_epoch_3000'
+            _it = 'GraphRNN_RNN_simulation_node_100_samples_200_epoch_3000'
+            fake_file = './baselines/outputs/{}.txt'.format(_it)
 
-            fake_file = './baselines/outputs/{}.txt'.format(_it)
-        elif 'scale-free-nodes-500' in dataset:
-            N = 500
-            l = 4
-            n_times = 5
-            tmax = 1.0
-            edge_contact_time = 0.01
-            time_interval = 1. / n_times
-            thres = 0.01
-            n_samples = 2000
-            if 'graphrnn' in dataset:
-                _it = 'GraphRNN_RNN_simulation_nodes_500_samples_100_epoch_3000'
-            if 'graphvae' in dataset:
-                _it = 'GraphRNN_VAE_simulation_nodes_500_samples_100_epoch_3000'
-            fake_file = './baselines/outputs/{}.txt'.format(_it)
-        elif 'scale-free-nodes-2500' in dataset:
-            N = 2500
-            l = 4
-            n_times = 5
-            tmax = 1.0
-            edge_contact_time = 0.01
-            time_interval = 1. / n_times
-            thres = 0.01
-            n_samples = 200
-            if 'graphrnn' in dataset:
-                _it = 'GraphRNN_RNN_simulation_nodes_2500_samples_100_epoch_3000'
-            if 'graphvae' in dataset:
-                _it = 'GraphRNN_VAE_simulation_nodes_2500_samples_100_epoch_3000'
-            fake_file = './baselines/outputs/{}.txt'.format(_it)
         fake_graphs = convert_discrete_to_continuous(fake_file, n_samples, time_interval, edge_contact_time)
 
     if 'dsbm' in dataset:
@@ -1261,17 +1232,13 @@ def get_fake_graph_data(dataset):
 
 if __name__ == "__main__":
 
-    save_directory = './evaluation_outputs'
-    if not os.path.isdir(save_directory):
-        os.makedirs(save_directory)
-
-    # data_name = 'auth'
+    data_name = 'auth'
     # data_name = 'metro'
     # data_name = 'scale-free-nodes-100'
-    # data_name = 'scale-free-nodes-500'
-    # data_name = 'scale-free-nodes-2500'
 
-    ### snapshots plots
+    # save_directory = './evaluation_outputs'
+    # if not os.path.isdir(save_directory):
+    #     os.makedirs(save_directory)
     #
     # Plot_Discrete_Graph(data_name=data_name,
     #                     file_name='{}/discrete_{}'.format(save_directory, data_name))
@@ -1281,7 +1248,7 @@ if __name__ == "__main__":
     # dataset = 'tggan_metro'
     # dataset = 'graphrnn_auth'
     # dataset = 'graphrnn_metro'
-    # dataset = 'graphvae_auth'
+    dataset = 'graphvae_auth'
     # dataset = 'graphvae_metro'
     # dataset = 'dsbm_auth'
     # dataset = 'dsbm_metro'
@@ -1291,38 +1258,34 @@ if __name__ == "__main__":
     # dataset = 'dsbm_scale-free-nodes-100'
 
     # dataset = 'tggan_scale-free-nodes-500'
-    # dataset = 'graphrnn_scale-free-nodes-500'
-    # dataset = 'graphvae_scale-free-nodes-500'
-    # dataset = 'dsbm_scale-free-nodes-500'
 
     # dataset = 'tggan_scale-free-nodes-2500'
-    # dataset = 'graphrnn_scale-free-nodes-2500'
-    #
-    # train_ratio = 0.8
-    #
-    # real_graphs = get_real_graph_data(dataset)
-    # N, n_times, tmax, time_interval, thres, edge_contact_time, fake_graphs = get_fake_graph_data(dataset)
-    #
-    #
-    # Gs = Graphs(real_graphs, N, tmax, edge_contact_time)
-    # # Plot_Graph(Gs.graph_list[n_times], '{}/{}_real'.format(save_directory, dataset.split('_')[1]))
-    #
-    # print('Real Mean_Average_Degree_Distribution:\n', Gs.Mean_Average_Degree_Distribution())
-    # print('Real Mean_Degree:\n', Gs.Mean_Mean_Degree())
-    # print('Real Mean_Average_Group_Size_Distribution:\n', Gs.Mean_Average_Group_Size_Distribution())
-    # print('Real Mean_Average_Group_Number:\n', Gs.Mean_Mean_Group_Number())
-    # print('Real Mean_Mean_Coordination_Number:\n', Gs.Mean_Mean_Coordination_Number())
-    #
-    # print('fake_graphs', fake_graphs)
-    # FGs = Graphs(fake_graphs, N, tmax, edge_contact_time)
-    # # Plot_Graph(FGs.graph_list[n_times], '{}/{}_fake'.format(save_directory, dataset))
-    #
-    # print('Fake Mean_Average_Degree_Distribution:\n', FGs.Mean_Average_Degree_Distribution())
-    # print('Fake Mean_Degree:\n', FGs.Mean_Mean_Degree())
-    # print('Fake Mean_Average_Group_Size_Distribution:\n', FGs.Mean_Average_Group_Size_Distribution())
-    # print('Fake Mean_Average_Group_Number:\n', FGs.Mean_Mean_Group_Number())
-    # print('Fake Mean_Mean_Coordination_Number:\n', FGs.Mean_Mean_Coordination_Number())
-    #
+
+    train_ratio = 0.8
+
+    real_graphs = get_real_graph_data(dataset)
+    N, n_times, tmax, time_interval, thres, edge_contact_time, fake_graphs = get_fake_graph_data(dataset)
+
+
+    Gs = Graphs(real_graphs, N, tmax, edge_contact_time)
+    # Plot_Graph(Gs.graph_list[n_times], '{}/{}_real'.format(save_directory, dataset.split('_')[1]))
+
+    print('Real Mean_Average_Degree_Distribution:\n', Gs.Mean_Average_Degree_Distribution())
+    print('Real Mean_Degree:\n', Gs.Mean_Mean_Degree())
+    print('Real Mean_Average_Group_Size_Distribution:\n', Gs.Mean_Average_Group_Size_Distribution())
+    print('Real Mean_Average_Group_Number:\n', Gs.Mean_Mean_Group_Number())
+    print('Real Mean_Mean_Coordination_Number:\n', Gs.Mean_Mean_Coordination_Number())
+
+    print('fake_graphs', fake_graphs)
+    FGs = Graphs(fake_graphs, N, tmax, edge_contact_time)
+    # Plot_Graph(FGs.graph_list[n_times], '{}/{}_fake'.format(save_directory, dataset))
+
+    print('Fake Mean_Average_Degree_Distribution:\n', FGs.Mean_Average_Degree_Distribution())
+    print('Fake Mean_Degree:\n', FGs.Mean_Mean_Degree())
+    print('Fake Mean_Average_Group_Size_Distribution:\n', FGs.Mean_Average_Group_Size_Distribution())
+    print('Fake Mean_Average_Group_Number:\n', FGs.Mean_Mean_Group_Number())
+    print('Fake Mean_Mean_Coordination_Number:\n', FGs.Mean_Mean_Coordination_Number())
+
     # print('MMD_Average_Degree', MMD_Average_Degree_Distribution(Gs, FGs))
     # print('MMD_Mean_Degree', MMD_Mean_Degree(Gs, FGs))
     # print('MMD_Group_Size_Distribution', MMD_Group_Size_Distribution(Gs, FGs))
@@ -1399,20 +1362,5 @@ if __name__ == "__main__":
     # except Exception as e:
     #     print('other error happened:\n{}'.format(e))
     # print('\n')
-
-    ### running time
-    file_name = 'running_time'
-    timing_100 = np.loadtxt('./timing_results/simulation-scale-free-nodes-100_iterations_100000.txt')
-    timing_500 = np.loadtxt('./timing_results/simulation-scale-free-nodes-500_iterations_1000.txt')
-    timing_2500 = np.loadtxt('./timing_results/simulation-scale-free-nodes-2500_iterations_100000.txt')
-    m = 200
-    n = m + 100
-    node_list = [100, 500, 2500]
-    tggan_time= [timing_100[m:n].mean(), timing_500[m:n].mean(), timing_2500[m:n].mean()]
-
-    plt.plot(node_list, tggan_time, c='r')
-    plt.show()
-    plt.savefig('{}/{}.png'.format(save_directory, file_name), dpi=120)
-
 
     print('finish execution!')
