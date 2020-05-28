@@ -6,9 +6,12 @@ import scipy
 import scipy.stats
 from scipy.io import savemat
 
+import platform
 import matplotlib
+if platform.system() == 'Linux': matplotlib.use('Agg')
+if platform.system() == 'Darwin': matplotlib.use('TkAgg')
+matplotlib.rcParams['agg.path.chunksize'] = 10000
 
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from utils import *
@@ -848,157 +851,103 @@ def MMD_Mean_Group_Duration(Gs, FGs):
 #         FGs.Sample_Mean_Coordination_Number().reshape(-1, 1)
 #     )
 
-class Discrete_Graphs:
-    def __init__(self, data, N, time_interval, thres, is_real_graph):
-        self.paths = None
-        data[:, 3] = data[:, 3] / time_interval
-        # create one weighted graph
-        max_d = data[:, 0].max()
-        data = data.astype(int)
-        edge_list, edge_counts = np.unique(data[:, 1:4], return_counts=True, axis=0)
-        edge_list = np.c_[edge_list, (edge_counts / max_d).reshape(-1, 1)]
-        contact_list = edge_list
+def convert_to_weighted_graph(data, N, time_interval, thres):
+    data[:, 3] = data[:, 3] / time_interval
+    # create one weighted graph
+    max_d = np.unique(data[:, 0]).shape[0]
+    data = data.astype(int)
+    edge_list, edge_counts = np.unique(data[:, 1:4], return_counts=True, axis=0)
+    edge_list = np.c_[edge_list, (edge_counts / max_d).reshape(-1, 1)]
+    # print('edge_list', edge_list)
 
-        edge_list = [list(e) for e in edge_list]
-        tg = teneto.TemporalNetwork(from_edgelist=edge_list, N=N, nettype='wd')
-        self.tg = tg
-        print('check_input(tg)', teneto.utils.utils.check_input(tg))
+    edge_list = [list(e) for e in edge_list]
+    tg = teneto.TemporalNetwork(from_edgelist=edge_list, N=N, nettype='wd')
+    # print('check_input(tg)', teneto.utils.utils.check_input(tg))
 
-        contact_list = contact_list[contact_list[:, 3] >= thres]
-        contact_list = contact_list[:, 0:3].astype(int)
-        contact_list = [list(e) for e in contact_list]
-
-        contact = {
-            'contacts': contact_list,
-            'nettype': 'bd',
-            'netshape': (N, N, int(1. / time_interval)),
-            't0': 0,
-            'nodelabels': [str(i + 1) for i in range(N)],
-            'timeunit': 'unit',
-            'timetype': 'discrete',
-            'dimord': 'node,node,time',
-            'diagonal': 0
-        }
-        contact_tg = teneto.TemporalNetwork(from_dict=contact)
-        print('check_input(contact_tg)', teneto.utils.utils.check_input(contact_tg))
-        # print(np.array(list(map(list, contact['contacts']))))
-        self.contact_tg = contact_tg
-
-        graplet_tg = teneto.utils.contact2graphlet(contact)
-        self.graplet_tg = graplet_tg
-        # print('graplet_tg.network', self.graplet_tg)
-
-        # teneto.utils.binarize(contact, threshold_type='percent', threshold_level=0.1)
-        # binary_tg = teneto.utils.binarize(contact, threshold_type='percent', threshold_level=0.1)
-        binary_tg = teneto.TemporalNetwork(from_edgelist=contact_list, N=N, nettype='bd')
-        self.binary_tg = binary_tg
-
-        # if is_real_graph:
-        #     graph_list = []
-        #     for d in np.unique(data[:, 0]):
-        #         one_graph = Create_Discrete_Temporal_Graph(data[data[:, 0] == d][:, 1:], time_interval, N)
-        #         graph_list.append(one_graph)
-        #     self.graph_list = graph_list
-
-    # def Sample_Temporal_Degree_Centrality(self):
-    #     tdc = []
-    #     for one_graph in self.tg:
-    #         cent = teneto.networkmeasures.temporal_degree_centrality(one_graph, calc='avg')
-    #         tdc.append(cent)
-    #     return np.array(tdc)
-
-    @func_set_timeout(60)
-    def Get_Temporal_Shortest_Path(self):
-        self.paths = teneto.networkmeasures.shortest_temporal_path(tnet=self.graplet_tg)
-
-    # def Mean_Temporal_Degree_Centrality(self):
-    #     return teneto.networkmeasures.temporal_degree_centrality(self.tg, calc='avg')
-    # return self.Sample_Temporal_Degree_Centrality().mean(axis=0)
-
-    @func_set_timeout(60)
-    def Temporal_Degree_Centrality(self):
-        return teneto.networkmeasures.temporal_degree_centrality(self.tg, calc='avg')
-
-    @func_set_timeout(60)
-    def Temporal_Closeness_Centrality(self):
-        return teneto.networkmeasures.temporal_closeness_centrality(paths=self.paths)
-
-    @func_set_timeout(60)
-    def Temporal_Betweenness_Centrality(self):
-        return teneto.networkmeasures.temporal_betweenness_centrality(paths=self.paths)
-
-    @func_set_timeout(60)
-    def Topological_Overlap(self):
-        return teneto.networkmeasures.topological_overlap(self.tg, calc='node')
-
-    @func_set_timeout(60)
-    def Bursty_Coeff(self):
-        print(self.tg.network.shape)
-        print(self.tg.network)
-        return teneto.networkmeasures.bursty_coeff(
-            self.tg,
-            calc='node',
-            # threshold_type='percent',
-            # threshold_level=0.5
-        )
-
-    @func_set_timeout(60)
-    def Temporal_Efficiency(self):
-        return teneto.networkmeasures.temporal_efficiency(paths=self.paths, calc='global')
-
+    # contact_list = edge_list
+    # contact_list = contact_list[contact_list[:, 3] >= thres]
+    # contact_list = contact_list[:, 0:3].astype(int)
+    # contact_list = [list(e) for e in contact_list]
+    #
+    # contact = {
+    #     'contacts': contact_list,
+    #     'nettype': 'bd',
+    #     'netshape': (N, N, int(1. / time_interval)),
+    #     't0': 0,
+    #     'nodelabels': [str(i + 1) for i in range(N)],
+    #     'timeunit': 'unit',
+    #     'timetype': 'discrete',
+    #     'dimord': 'node,node,time',
+    #     'diagonal': 0
+    # }
+    # contact_tg = teneto.TemporalNetwork(from_dict=contact)
+    # print('check_input(contact_tg)', teneto.utils.utils.check_input(contact_tg))
+    # # print(np.array(list(map(list, contact['contacts']))))
+    #
+    # graplet_tg = teneto.utils.contact2graphlet(contact)
+    # # print('graplet_tg.network', self.graplet_tg)
+    #
+    # # teneto.utils.binarize(contact, threshold_type='percent', threshold_level=0.1)
+    # # binary_tg = teneto.utils.binarize(contact, threshold_type='percent', threshold_level=0.1)
+    # binary_tg = teneto.TemporalNetwork(from_edgelist=contact_list, N=N, nettype='bd')
+    return tg
 
 def Plot_Discrete_Graph(data_name, file_name, ax=None, nodesize=0.1, show=False):
-    if ax is None: fig, ax = plt.subplots(1, 5, figsize=(20, 5))
-    methods = ['tggan', 'graphrnn', 'graphvae', 'dsbm']
-    max_node = 0
-    min_node = 3000
+    if 'protein' in data_name:
+        methods = ['netgan', 'dsbm', 'wenbin']
+        if ax is None: fig, ax = plt.subplots(1, len(methods)+1, figsize=(20, 5))
+    else:
+        methods = ['tggan', 'graphrnn', 'netgan', 'graphvae', 'dsbm', 'wenbin']
+        if ax is None: fig, ax = plt.subplots(1, len(methods)+1, figsize=(20, 5))
+
+    # plot
+    edgeweightscalar = 3
+    plotedgeweights = True
+    cmap = "Dark2"
+
     for i in range(len(methods)):
         method_name = methods[i]
         dataset = "{}_{}".format(method_name, data_name)
+        print('dataset', dataset)
         N, n_times, tmax, time_interval, thres, edge_contact_time, fake_graphs = get_fake_graph_data(dataset)
-        FDGs = Discrete_Graphs(fake_graphs, N, time_interval, thres, is_real_graph=False)
-        fake_tg = FDGs.tg
+        print('fake_graphs', fake_graphs)
+        fake_tg = convert_to_weighted_graph(fake_graphs, N, time_interval, thres)
         fake_nodes_list = np.unique(fake_tg.network.values[:, 1:3].reshape(1, -1)[0])
-        max_node = int(max(max_node, fake_nodes_list.max()))
-        min_node = int(min(min_node, fake_nodes_list.min()))
+        max_node = N
+        min_node = -1
+        min_time = -1
+        max_time = 5
 
-        # plot
-        edgeweightscalar = 3
-        plotedgeweights = True
-        cmap = "Dark2"
+        # fake graph
         ax_fake = ax[i+1]
         ax_fake = fake_tg.plot('slice_plot', ax=ax_fake, nodesize=nodesize,
                                plotedgeweights=plotedgeweights, edgeweightscalar=edgeweightscalar,
                                cmap=cmap)
 
         yticklabels = [str(i) if i in fake_nodes_list else '' for i in range(min_node, max_node + 1)]
-
+        # ax_fake.grid(axis='y')
+        ax_fake.set_ylim([min_node, max_node])
+        if 'protein' in data_name: ax_fake.set_xlim([min_time, max_time])
         ax_fake.set_yticklabels(yticklabels)
-        ax_fake.set_title('{}) {} generated snapshots of {}'.format(i+2, method_name, data_name))
-
-    ax_real = ax[0]
-
-
-    ax_fake.grid(axis='y')
-    ax_fake.set_ylim([min_node, max_node])
-    real_graphs = get_real_graph_data(data_name)
-    DGs = Discrete_Graphs(real_graphs, N, time_interval, thres, is_real_graph=True)
-    real_tg = DGs.tg
-    real_nodes_list = np.unique(real_tg.network.values[:, 1:3].reshape(1, -1)[0])
-    max_node = int(max(max_node, real_nodes_list.max()))
-    min_node = int(min(min_node, real_nodes_list.min()))
+        ax_fake.set_title('{}) {} - {}'.format(i+2, method_name, data_name), fontsize=14)
 
     # plot real
+    ax_real = ax[0]
+    real_graphs = get_real_graph_data(data_name, time_interval, edge_contact_time)
+    real_tg = convert_to_weighted_graph(real_graphs, N, time_interval, thres)
+    real_nodes_list = np.unique(real_tg.network.values[:, 1:3].reshape(1, -1)[0])
     ax_real = real_tg.plot('slice_plot', ax=ax_real, nodesize=nodesize,
                            plotedgeweights=True, edgeweightscalar=5, cmap="Dark2")
-
     yticklabels = [str(i) if i in real_nodes_list else '' for i in range(min_node, max_node + 1)]
+    # ax_real.grid(axis='y')
+    ax_real.set_ylim([min_node, max_node])
+    if 'protein' in data_name: ax_real.set_xlim([min_time, max_time])
     ax_real.set_yticklabels(yticklabels)
-    ax_real.set_title('1) real snapshots of {}'.format(data_name))
+    ax_real.set_title('1) real graphs of {}'.format(data_name))
 
     for ax_i in ax:
         ax_i.set_ylim([min_node, max_node])
-        ax_i.grid(axis='y')
+        ax_i.grid(False)
 
     if show: plt.show()
     plt.tight_layout()
@@ -1016,7 +965,7 @@ def Create_Discrete_Temporal_Graph(edges, time_interval, N):
 
 def convert_discrete_to_continuous(fake_file, n_samples, time_interval, edge_contact_time):
     res = np.loadtxt(fake_file)
-    print('read fake graph file', res.shape)
+    # print('read fake graph file', res.shape)
     unique_d_list = []
     n_times = len(np.unique(res[:, 3]))
     for t in range(n_times):
@@ -1040,12 +989,22 @@ def convert_discrete_to_continuous(fake_file, n_samples, time_interval, edge_con
     return fake_graphs
 
 
-def get_real_graph_data(data_name):
+def get_real_graph_data(data_name, time_interval, edge_contact_time, n_samples=1000):
+    print('real data', data_name)
+    if 'protein' in data_name:
+        real_graphs = np.loadtxt('./data/protein_100_real.txt')
+        d_col = 0
+        t_col = 3
+        real_graphs = real_graphs[real_graphs[:, d_col] < n_samples]
+        real_graphs = real_graphs.astype(float)
+        real_graphs[:, t_col] = (real_graphs[:, t_col] + 0.5) * time_interval + edge_contact_time / 2
     if 'auth' in data_name:
         user_id = 0
         name = '{}_user_{}'.format(data_name, user_id)
         file = "data/{}_user_{}.txt".format(data_name, user_id)
         real_graphs = np.loadtxt('./data/{}_user_{}.txt'.format('auth', user_id))
+        # real_graphs[:, 1] = real_graphs[:, 1] - 1
+        # real_graphs[:, 1] = real_graphs[:, 1] - 1
     elif 'metro' in data_name:
         user_id = 4
         name = '{}_user_{}'.format(data_name, user_id)
@@ -1063,7 +1022,7 @@ def get_real_graph_data(data_name):
     return real_graphs
 
 
-def get_fake_graph_data(dataset):
+def get_fake_graph_data(dataset, n_samples=100):
     if 'tggan' in dataset:
         if 'auth' in dataset:
             N = 27
@@ -1100,8 +1059,8 @@ def get_fake_graph_data(dataset):
             time_interval = 1. / n_times
             thres = 0.01
 
-            _it = '20200206-233146_assembled_graph_iter_76000'
-            matlab_file = 'fake_graph_TGGAN_scale-free-nodes-100_iter_76000'
+            _it = '20200210-110001_assembled_graph_iter_39000'
+            matlab_file = 'fake_graph_TGGAN_scale-free-nodes-100_iter_39000'
             dir = 'outputs-scale-free-nodes-100-best'
             fake_file = './{}/{}.npz'.format(dir, _it)
         elif 'scale-free-nodes-500' in dataset:
@@ -1132,20 +1091,18 @@ def get_fake_graph_data(dataset):
             fake_file = './{}/{}.npz'.format(dir, _it)
 
         res = np.load(fake_file)
-        print(list(res.keys()))
+        # print(list(res.keys()))
         if dataset == 'tggan_auth':
             fake_graphs = scipy.io.loadmat('./{}/{}.mat'.format(dir, matlab_file))
             fake_graphs = fake_graphs['fake_graphs'][:10]
-            print('fake_graphs', fake_graphs.shape)
             fake_graphs = convert_graphs(fake_graphs)
             fake_graphs[:, 3] = 1. - fake_graphs[:, 3]
         else:
-            scipy.io.savemat('./{}/{}.mat'.format(dir, matlab_file),
-                             dict(fake_graphs=res['fake_graphs']))
             fake_graphs = res['fake_graphs']
-        print(dataset, fake_graphs)
+            scipy.io.savemat('./{}/{}.mat'.format(dir, matlab_file),
+                             dict(fake_graphs=fake_graphs))
 
-    if 'graphrnn' in dataset or 'graphvae' in dataset:
+    if 'wenbin' in dataset:
         if 'auth' in dataset:
             N = 27
             l = 4
@@ -1154,18 +1111,75 @@ def get_fake_graph_data(dataset):
             edge_contact_time = 0.02
             time_interval = 1. / n_times
             thres = 0.01
-            n_samples = 2000
-            fake_file = 'baselines/outputs/GraphRNN_RNN_auth_epoch_3000.txt'
+            # n_samples = 2000
+            fake_file = 'baselines/outputs/fake_graph_wenbin_auth_user_generated.txt'
+        if 'metro' in dataset:
+            N = 91
+            l = 4
+            n_times = 6
+            tmax = 1.0
+            edge_contact_time = 0.02
+            time_interval = 1. / n_times
+            thres = 0.01
+            n_samples = 1
+            fake_file = 'baselines/outputs/fake_graph_wenbin_metro_user_generated.txt'
+        if 'protein' in dataset:
+            N = 8
+            l = 4
+            n_times = 100
+            tmax = 1.0
+            edge_contact_time = 0.002
+            time_interval = 1. / n_times
+            thres = 0.01
+            # n_samples = 20
+            fake_file = 'baselines/outputs/fake_graph_wenbin_protein100_user_generated.txt'
+
+        fake_graphs = np.loadtxt(fake_file)
+        d_col = 0
+        t_col = 3
+        fake_graphs = fake_graphs[fake_graphs[:, d_col] < n_samples]
+        fake_graphs = fake_graphs.astype(float)
+        fake_graphs[:, t_col] = (fake_graphs[:, t_col] + 0.5) * time_interval + edge_contact_time / 2
+
+    if 'graphrnn' in dataset or 'graphvae' in dataset or 'netgan' in dataset:
+        if 'protein' in dataset:
+            N = 8
+            l = 4
+            n_times = 100
+            tmax = 1.0
+            edge_contact_time = 0.002
+            time_interval = 1. / n_times
+            thres = 0.01
+            # n_samples = 2000
+            if 'graphrnn' in dataset: fake_file = 'baselines/outputs/GraphRNN_RNN_'
+            if 'graphvae' in dataset: fake_file = 'baselines/outputs/GraphRNN_VAE_conditional_'
+            if 'netgan' in dataset: fake_file = 'baselines/outputs/fake_graph_netgan_protein_node_8_sample_1000_times_100.txt'
+        if 'auth' in dataset:
+            N = 27
+            l = 4
+            n_times = 4
+            tmax = 1.0
+            edge_contact_time = 0.02
+            time_interval = 1. / n_times
+            thres = 0.01
+            # n_samples = 2000
+            if 'graphrnn' in dataset: fake_file = 'baselines/outputs/GraphRNN_RNN_auth_epoch_3000.txt'
+            if 'graphvae' in dataset: fake_file = 'baselines/outputs/GraphRNN_VAE_conditional_auth_epoch_3000.txt'
+            if 'netgan' in dataset: fake_file = 'baselines/outputs/fake_graph_netgan_auth_node_27_sample_1000_times_4.txt'
+            # if 'wenbin' in dataset: fake_file = 'baselines/outputs/fake_graph_wenbin_auth_user_generated.txt'
         elif 'metro' in dataset:
             N = 91
             l = 4
             n_times = 6
             tmax = 1.0
             edge_contact_time = 0.02
-            time_interval = 1. / 6
+            time_interval = 1. / n_times
             thres = 0.01
-            n_samples = 2000
-            fake_file = 'baselines/outputs/GraphRNN_RNN_metro_epoch_3000.txt'
+            # n_samples = 2000
+            if 'graphrnn' in dataset: fake_file = 'baselines/outputs/GraphRNN_RNN_metro_epoch_3000.txt'
+            if 'graphvae' in dataset: fake_file = 'baselines/outputs/GraphRNN_VAE_conditional_metro_epoch_3000.txt'
+            if 'netgan' in dataset: fake_file = 'baselines/outputs/fake_graph_netgan_metro_node_91_sample_1000_times_6.txt'
+            # if 'wenbin' in dataset: fake_file = 'baselines/outputs/fake_graph_wenbin_metro_user_generated.txt'
         elif 'scale-free-nodes-100' in dataset:
             N = 100
             l = 4
@@ -1174,13 +1188,24 @@ def get_fake_graph_data(dataset):
             edge_contact_time = 0.01
             time_interval = 1. / n_times
             thres = 0.01
-            n_samples = 2000
-            _it = 'GraphRNN_RNN_simulation_node_100_samples_200_epoch_3000'
-            fake_file = './baselines/outputs/{}.txt'.format(_it)
+            # n_samples = 2000
+            if 'graphrnn' in dataset: fake_file = './baselines/outputs/GraphRNN_RNN_simulation_nodes_100_samples_200_epoch_3000.txt'
+            if 'graphvae' in dataset: fake_file = './baselines/outputs/GraphRNN_VAE_simulation_nodes_100_samples_200_epoch_3000.txt'
+            if 'netgan' in dataset: fake_file = 'baselines/outputs/fake_graph_netgan_simulation_node_100_sample_200_times_5.txt'
 
         fake_graphs = convert_discrete_to_continuous(fake_file, n_samples, time_interval, edge_contact_time)
 
     if 'dsbm' in dataset:
+        if 'protein' in dataset:
+            N = 8
+            l = 4
+            n_times = 100
+            tmax = 1.0
+            edge_contact_time = 0.002
+            time_interval = 1. / n_times
+            thres = 0.01
+            n_samples = 10
+            fake_file = './baselines/outputs/DSBM_protein100_May-27-2020_22-46-03.mat'
         if 'auth' in dataset:
             N = 27
             l = 4
@@ -1189,7 +1214,7 @@ def get_fake_graph_data(dataset):
             edge_contact_time = 0.02
             time_interval = tmax / n_times
             thres = 0.01
-            n_samples = 10
+            # n_samples = 10
             fake_file = 'baselines/outputs/DSBM_auth_Jan-10-2020_17-33-49.mat'
         elif 'metro' in dataset:
             N = 91
@@ -1209,7 +1234,7 @@ def get_fake_graph_data(dataset):
             edge_contact_time = 0.02
             time_interval = tmax / n_times
             thres = 0.01
-            n_samples = 10
+            # n_samples = 10
             fake_file = 'baselines/outputs/DSBM_scale-free-nodes-100_Feb-05-2020_12-15-32.mat'
 
         t_col = 3
@@ -1218,7 +1243,7 @@ def get_fake_graph_data(dataset):
         # res = res['adjSbtm_fake_graphs']
         res = res.reshape(N, N, n_times, -1)
         res = res[:, :, :, :n_samples]
-        print(dataset, res.shape)
+        # print(dataset, res.shape)
         fake_graphs = []
         for d in range(res.shape[-1]):
             i_inx, j_inx, t_inx = np.nonzero(res[:, :, :, d])
@@ -1235,20 +1260,21 @@ if __name__ == "__main__":
     data_name = 'auth'
     # data_name = 'metro'
     # data_name = 'scale-free-nodes-100'
+    # data_name = 'protein'
 
-    # save_directory = './evaluation_outputs'
-    # if not os.path.isdir(save_directory):
-    #     os.makedirs(save_directory)
-    #
-    # Plot_Discrete_Graph(data_name=data_name,
-    #                     file_name='{}/discrete_{}'.format(save_directory, data_name))
+    save_directory = './evaluation_outputs'
+    if not os.path.isdir(save_directory):
+        os.makedirs(save_directory)
+
+    Plot_Discrete_Graph(data_name=data_name,
+                        file_name='{}/discrete_{}'.format(save_directory, data_name))
 
     ### mmd purposes
     # dataset = 'tggan_auth'
     # dataset = 'tggan_metro'
     # dataset = 'graphrnn_auth'
     # dataset = 'graphrnn_metro'
-    dataset = 'graphvae_auth'
+    # dataset = 'graphvae_auth'
     # dataset = 'graphvae_metro'
     # dataset = 'dsbm_auth'
     # dataset = 'dsbm_metro'
@@ -1261,30 +1287,30 @@ if __name__ == "__main__":
 
     # dataset = 'tggan_scale-free-nodes-2500'
 
-    train_ratio = 0.8
-
-    real_graphs = get_real_graph_data(dataset)
-    N, n_times, tmax, time_interval, thres, edge_contact_time, fake_graphs = get_fake_graph_data(dataset)
-
-
-    Gs = Graphs(real_graphs, N, tmax, edge_contact_time)
-    # Plot_Graph(Gs.graph_list[n_times], '{}/{}_real'.format(save_directory, dataset.split('_')[1]))
-
-    print('Real Mean_Average_Degree_Distribution:\n', Gs.Mean_Average_Degree_Distribution())
-    print('Real Mean_Degree:\n', Gs.Mean_Mean_Degree())
-    print('Real Mean_Average_Group_Size_Distribution:\n', Gs.Mean_Average_Group_Size_Distribution())
-    print('Real Mean_Average_Group_Number:\n', Gs.Mean_Mean_Group_Number())
-    print('Real Mean_Mean_Coordination_Number:\n', Gs.Mean_Mean_Coordination_Number())
-
-    print('fake_graphs', fake_graphs)
-    FGs = Graphs(fake_graphs, N, tmax, edge_contact_time)
-    # Plot_Graph(FGs.graph_list[n_times], '{}/{}_fake'.format(save_directory, dataset))
-
-    print('Fake Mean_Average_Degree_Distribution:\n', FGs.Mean_Average_Degree_Distribution())
-    print('Fake Mean_Degree:\n', FGs.Mean_Mean_Degree())
-    print('Fake Mean_Average_Group_Size_Distribution:\n', FGs.Mean_Average_Group_Size_Distribution())
-    print('Fake Mean_Average_Group_Number:\n', FGs.Mean_Mean_Group_Number())
-    print('Fake Mean_Mean_Coordination_Number:\n', FGs.Mean_Mean_Coordination_Number())
+    # train_ratio = 0.8
+    #
+    # real_graphs = get_real_graph_data(dataset)
+    # N, n_times, tmax, time_interval, thres, edge_contact_time, fake_graphs = get_fake_graph_data(dataset)
+    #
+    #
+    # Gs = Graphs(real_graphs, N, tmax, edge_contact_time)
+    # # Plot_Graph(Gs.graph_list[n_times], '{}/{}_real'.format(save_directory, dataset.split('_')[1]))
+    #
+    # print('Real Mean_Average_Degree_Distribution:\n', Gs.Mean_Average_Degree_Distribution())
+    # print('Real Mean_Degree:\n', Gs.Mean_Mean_Degree())
+    # print('Real Mean_Average_Group_Size_Distribution:\n', Gs.Mean_Average_Group_Size_Distribution())
+    # print('Real Mean_Average_Group_Number:\n', Gs.Mean_Mean_Group_Number())
+    # print('Real Mean_Mean_Coordination_Number:\n', Gs.Mean_Mean_Coordination_Number())
+    #
+    # print('fake_graphs', fake_graphs)
+    # FGs = Graphs(fake_graphs, N, tmax, edge_contact_time)
+    # # Plot_Graph(FGs.graph_list[n_times], '{}/{}_fake'.format(save_directory, dataset))
+    #
+    # print('Fake Mean_Average_Degree_Distribution:\n', FGs.Mean_Average_Degree_Distribution())
+    # print('Fake Mean_Degree:\n', FGs.Mean_Mean_Degree())
+    # print('Fake Mean_Average_Group_Size_Distribution:\n', FGs.Mean_Average_Group_Size_Distribution())
+    # print('Fake Mean_Average_Group_Number:\n', FGs.Mean_Mean_Group_Number())
+    # print('Fake Mean_Mean_Coordination_Number:\n', FGs.Mean_Mean_Coordination_Number())
 
     # print('MMD_Average_Degree', MMD_Average_Degree_Distribution(Gs, FGs))
     # print('MMD_Mean_Degree', MMD_Mean_Degree(Gs, FGs))
@@ -1362,5 +1388,95 @@ if __name__ == "__main__":
     # except Exception as e:
     #     print('other error happened:\n{}'.format(e))
     # print('\n')
+
+    ### running time
+    # file_name = 'running_time_nodes'
+    # timing_100 = np.loadtxt('./timing_results/simulation-scale-free-nodes-100_iterations_100000.txt')
+    # timing_500 = np.loadtxt('./timing_results/simulation-scale-free-nodes-500_iterations_1000.txt')
+    # timing_2500 = np.loadtxt('./timing_results/simulation-scale-free-nodes-2500_iterations_100000.txt')
+    # m = 200
+    # n = m + 100
+    # node_list = [100, 500, 2500]
+    # tggan_time= np.log10([timing_100[m:n].mean(), timing_500[m:n].mean(), timing_2500[m:n].mean()])
+    #
+    # graphrnn_100 = np.load(
+    #     './timing_results/GraphRNN_RNN_simulation_nodes_100_samples_200_times_5_4_128_pred__nodes_100_days_200_time_0_GraphRNN_RNN.npy')
+    # graphrnn_500 = np.load(
+    #     './timing_results/GraphRNN_VAE_conditional_simulation_nodes_500_samples_100_times_5_4_128_pred__nodes_500_days_100_time_0_GraphRNN_VAE_conditional.npy')
+    # graphrnn_2500 = np.load(
+    #     './timing_results/GraphRNN_RNN_simulation_nodes_2500_samples_100_times_5_4_128_pred__nodes_2500_days_100_time_0_GraphRNN_RNN.npy')
+    # graphrnn_time = np.log10([graphrnn_100[m:n].mean(), graphrnn_500[m:n].mean(), graphrnn_2500[m:n].mean()])
+    #
+    # graphvae_100 = np.load(
+    #     './timing_results/GraphRNN_VAE_conditional_simulation_nodes_100_samples_200_times_5_4_128_pred__nodes_100_days_200_time_0_GraphRNN_VAE_conditional.npy'
+    # )
+    # graphvae_500 = np.load(
+    #     './timing_results/GraphRNN_VAE_conditional_simulation_nodes_500_samples_100_times_5_4_128_pred__nodes_500_days_100_time_0_GraphRNN_VAE_conditional.npy'
+    # )
+    # graphvae_time = np.log10([graphvae_100[m:n].mean(), graphvae_500[m:n].mean()*5])
+    #
+    # dsbm_100 = 1.9352e+03/20
+    # dsbm_time = [np.log10(dsbm_100)]
+    #
+    # fig, ax = plt.subplots(1, 1, figsize=(6, 3))
+    # ax.plot(node_list, tggan_time, c='black', marker='s', label='TG-GAN')
+    # ax.plot(node_list, graphrnn_time, c='b', marker='s', label='GraphRNN')
+    # ax.plot(node_list[0:2], graphvae_time, c='r', marker='s', label='GraphVAE')
+    # ax.plot(node_list[0:1], dsbm_time, c='orange', marker='s', label='DSBM')
+    # ax.set_xlabel('Node size', fontsize=18)
+    # ax.set_xticks(node_list)
+    # ax.set_ylabel('Running Time \n[per epoch]', fontsize=18)
+    # y_ticks = [-1, 0, 1, 2]
+    # ax.set_yticks(y_ticks)
+    # ax.set_yticklabels([r'$10^{%d}$' % i for i in y_ticks])
+    # ax.tick_params(labelsize=16)
+    # ax.legend(fontsize=16)
+    # plt.subplots_adjust(left=0.2, bottom=0.2)
+    # plt.savefig('{}/{}.png'.format(save_directory, file_name), dpi=120)
+
+    ### running time with time snapshots
+    # file_name = 'running_time_snapshots'
+    #
+    # snapshot_list = [5, 10, 20]
+    #
+    # fig, ax = plt.subplots(1, 1, figsize=(6, 3))
+    # ax.plot(snapshot_list, [tggan_time[0] for s in snapshot_list], c='black', marker='s', label='TG-GAN')
+    # ax.plot(snapshot_list, [graphrnn_time[0]*s/5 for s in snapshot_list], c='b', marker='s', label='GraphRNN')
+    # ax.plot(snapshot_list[0:2], [graphvae_time[0]*s/5 for s in snapshot_list[0:2]], c='r', marker='s', label='GraphVAE')
+    # ax.plot(snapshot_list[0:1], [dsbm_time[0]*s/5 for s in snapshot_list[0:1]], c='orange', marker='s', label='GraphVAE')
+    # ax.set_xlabel('Snapshot size', fontsize=18)
+    # ax.set_xticks(snapshot_list)
+    # ax.set_ylabel('Running Time \n[per epoch]', fontsize=18)
+    # y_ticks = [-1, 0, 1, 2]
+    # ax.set_yticks(y_ticks)
+    # ax.set_yticklabels([r'$10^{%d}$' % i for i in y_ticks])
+    # ax.tick_params(labelsize=16)
+    # ax.legend(fontsize=16)
+    # plt.subplots_adjust(left=0.2, bottom=0.2)
+    # plt.savefig('{}/{}.png'.format(save_directory, file_name), dpi=120)
+
+    ### loss function plot
+    # file_name = 'tggan_loss'
+    # # loss = np.load('outputs-auth-user-0/20200209-004116_training_loss_iter_45000.npz')
+    # loss = np.load('outputs-scale-free-nodes-100-samples-200/20200210-110001_training_loss_iter_55000.npz')
+    #
+    # gen_losses = loss['gen_losses']
+    # disc_losses = loss['disc_losses']
+    # epoches = np.arange(len(gen_losses))
+    # # mask = disc_losses < 20
+    # mask = (disc_losses < 20) & (epoches < 2800)
+    # gen_losses = gen_losses[mask]
+    # disc_losses = disc_losses[mask]
+    # epoches = epoches[mask]
+    #
+    # fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+    # ax.plot(epoches, disc_losses, label='Discriminator loss')
+    # ax.plot(epoches, gen_losses, label='Generator loss')
+    # ax.set_xlabel('Epoches', fontsize=20)
+    # ax.set_ylabel('Loss', fontsize=20)
+    # ax.tick_params(labelsize=18)
+    # ax.legend(fontsize=18)
+    # plt.subplots_adjust(left=0.16, bottom=0.16)
+    # plt.savefig('{}/{}.png'.format(save_directory, file_name), dpi=120)
 
     print('finish execution!')

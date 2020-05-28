@@ -1,7 +1,8 @@
 from __future__ import absolute_import, division, print_function
-
+import platform
 import matplotlib
-matplotlib.use('Agg')
+if platform.system() == 'Linux': matplotlib.use('Agg')
+if platform.system() == 'Darwin': matplotlib.use('TkAgg')
 
 from main import *
 
