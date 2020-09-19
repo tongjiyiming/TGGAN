@@ -1,6 +1,8 @@
-sudo nvidia-docker run -itd --name tggan \
+docker run -itd --gpus all --name tggan \
 -e NB_USER=lem -e GRANT_SUDO=yes --user root \
--v $PWD:$HOME/work -w $HOME/work  -p 8893:8888 tongjiyiming/cuda-tensorflow:tf-1.14 \
+-v $PWD:$HOME/work -w $HOME/work  -p 8893:8888 \
+tensorflow/tensorflow:1.14.0-gpu-py3
+# tongjiyiming/cuda-tensorflow:tggan-netgan \
 # bash
 # sudo start-notebook.sh
 
