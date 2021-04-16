@@ -84,6 +84,8 @@ def run(args):
             log('load simulated data from {}: \n{}'.format(simulate_data_file, edges))
 
         train_edges, test_edges = Split_Train_Test(edges, train_ratio)
+        np.savetxt(fname='{}/{}_train.txt'.format(output_directory, prefix), X=train_edges)
+        np.savetxt(fname='{}/{}_test.txt'.format(output_directory, prefix), X=test_edges)
 
         walker = TemporalWalker(n_nodes, train_edges, t_end,
                                 scale, rw_len, batch_size,

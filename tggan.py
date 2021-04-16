@@ -1,14 +1,3 @@
-"""
-Implementation of the method proposed in the paper:
-'Adversarial Attacks on Classification Models for Graphs'
-by Aleksandar Bojchevski, Oleksandr Shchur, Daniel Zügner, Stephan Günnemann
-Published at ICML 2018 in Stockholm, Sweden.
-
-Copyright (C) 2018
-Daniel Zügner
-Technical University of Munich
-"""
-
 import os
 import shutil
 import logging
@@ -62,9 +51,6 @@ from utils import *
 from evaluation import *
 
 class TGGAN:
-    """
-    NetGAN class, an implicit generative model for graphs using random walks.
-    """
 
     def __init__(self, N, rw_len, walk_generator,
                  t_end,
@@ -83,62 +69,6 @@ class TGGAN:
                  temperature_decay=1 - 5e-5, seed=15, gpu_id=0,
                  use_gumbel=True, use_wgan=False, use_decoder='normal',
                  legacy_generator=False):
-        """
-        Initialize NetGAN.
-
-        Parameters
-        ----------
-        N: int
-           Number of nodes in the graph to generate.
-        rw_len: int
-                Length of random walks to generate.
-        walk_generator: function
-                        Function that generates a single random walk and takes no arguments.
-        generator_layers: list of integers, default: [40], i.e. a single layer with 40 units.
-                          The layer sizes of the generator LSTM layers
-        discriminator_layers: list of integers, default: [30], i.e. a single layer with 30 units.
-                              The sizes of the discriminator LSTM layers
-        W_down_generator_size: int, default: 128
-                               The size of the weight matrix W_down of the generator. See our paper for details.
-        W_down_discriminator_size: int, default: 128
-                                   The size of the weight matrix W_down of the discriminator. See our paper for details.
-        batch_size: int, default: 128
-                    The batch size.
-        noise_dim: int, default: 16
-                   The dimension of the random noise that is used as input to the generator.
-        noise_type: str in ["Gaussian", "Uniform], default: "Gaussian"
-                    The noise type to feed into the generator.
-        learning_rate: float, default: 0.0003
-                       The learning rate.
-        disc_iters: int, default: 3
-                    The number of discriminator iterations per generator training iteration.
-        wasserstein_penalty: float, default: 10
-                             The Wasserstein gradient penalty applied to the discriminator. See the Wasserstein GAN
-                             paper for details.
-        l2_penalty_generator: float, default: 1e-7
-                                L2 penalty on the generator weights.
-        l2_penalty_discriminator: float, default: 5e-5
-                                    L2 penalty on the discriminator weights.
-        temp_start: float, default: 5.0
-                    The initial temperature for the Gumbel softmax.
-        min_temperature: float, default: 0.5
-                         The minimal temperature for the Gumbel softmax.
-        temperature_decay: float, default: 1-5e-5
-                           After each evaluation, the current temperature is updated as
-                           current_temp := max(temperature_decay*current_temp, min_temperature)
-        seed: int, default: 15
-              Random seed.
-        gpu_id: int or None, default: 0
-                The ID of the GPU to be used for training. If None, CPU only.
-        use_gumbel: bool, default: True
-                Use the Gumbel softmax trick.
-
-        legacy_generator: bool, default: False
-            If True, the hidden and cell states of the generator LSTM are initialized by two separate feed-forward networks.
-            If False (recommended), the hidden layer is shared, which has less parameters and performs just as good.
-
-        """
-
         self.params = {
             'noise_dim': noise_dim,
             'noise_type': noise_type,
@@ -383,22 +313,6 @@ class TGGAN:
         return lengths
 
     def discriminator_recurrent(self, x, t0_res, node_inputs, tau_inputs, end, reuse=None):
-        """
-        Discriminate real from fake random walks using LSTM.
-        Parameters
-        ----------
-        inputs: tf.tensor, shape (None, rw_len, N)
-                The inputs to process
-        reuse: bool, default: None
-               If True, discriminator variables will be reused.
-
-        Returns
-        -------
-        final_score: tf.tensor, shape [None,], i.e. a scalar
-                     A score measuring how "real" the input random walks are perceived.
-
-        """
-
         with tf.variable_scope('Discriminator') as scope:
             if reuse == True:
                 scope.reuse_variables()
@@ -461,27 +375,6 @@ class TGGAN:
                             x_input=None, x_mode="uniform", t0_input=None,
                             edge_input=None, tau_input=None,
                             gumbel=True, legacy=False):
-        """
-        Generate random walks using LSTM.
-        Parameters
-        ----------
-        n_samples: int
-                   The number of random walks to generate.
-        reuse: bool, default: None
-               If True, generator variables will be reused.
-        z: None or tensor of shape (n_samples, noise_dim)
-           The input noise. None means that the default noise generation function will be used.
-        gumbel: bool, default: False
-            Whether to use the gumbel softmax for generating discrete output.
-        legacy: bool, default: False
-            If True, the hidden and cell states of the generator LSTM are initialized by two separate feed-forward networks.
-            If False (recommended), the hidden layer is shared, which has less parameters and performs just as good.
-        Returns
-        -------
-        The generated random walks, shape [None, rw_len, N]
-
-        """
-
         with tf.variable_scope('Generator') as scope:
             if reuse is True:
                 scope.reuse_variables()
@@ -817,30 +710,6 @@ class TGGAN:
         return tf.log(x + eps)
 
     def generate_discrete(self, n_samples, edge_contact_time, n_eval_loop, reuse=True, z=None, gumbel=True, legacy=False):
-        """
-        Generate a random walk in index representation (instead of one hot). This is faster but prevents the gradients
-        from flowing into the generator, so we only use it for evaluation purposes.
-
-        Parameters
-        ----------
-        n_samples: int
-                   The number of random walks to generate.
-        reuse: bool, default: None
-               If True, generator variables will be reused.
-        z: None or tensor of shape (n_samples, noise_dim)
-           The input noise. None means that the default noise generation function will be used.
-        gumbel: bool, default: False
-            Whether to use the gumbel softmax for generating discrete output.
-        legacy: bool, default: False
-            If True, the hidden and cell states of the generator LSTM are initialized by two separate feed-forward networks.
-            If False (recommended), the hidden layer is shared, which has less parameters and performs just as good.
-
-        Returns
-        -------
-                The generated random walks, shape [None, rw_len, N]
-
-
-        """
         self.start_x_0 = tf.one_hot(tf.zeros(dtype=tf.int64, shape=[n_samples, ]), depth=2, name="start_x_0")
         self.start_x_1 = tf.one_hot(tf.ones(dtype=tf.int64, shape=[n_samples, ]), depth=2, name="start_x_1")
         self.start_t0 = tf.ones(dtype=tf.float32, shape=[n_samples, 1], name='start_t0')
@@ -890,55 +759,6 @@ class TGGAN:
               max_patience=5, eval_every=500, plot_every=1000,
               output_directory='outputs', save_directory="snapshots", timing_directory="timings",
               model_name=None, continue_training=False):
-        """
-
-        Parameters
-        ----------
-        A_orig: sparse matrix, shape: (N,N)
-                Adjacency matrix of the original graph to be trained on.
-        val_ones: np.array, shape (n_val, 2)
-                  The indices of the hold-out set of validation edges
-        val_zeros: np.array, shape (n_val, 2)
-                  The indices of the hold-out set of validation non-edges
-        max_iters: int, default: 50,000
-                   The maximum number of training iterations if early early_stopping does not apply.
-        early_stopping: float in (0,1] or None, default: None
-                  The early stopping strategy. None means VAL criterion will be used (i.e. evaluation on the
-                  validation set and stopping after there has not been an improvement for *max_patience* steps.
-                  Set to a value in the interval (0,1] to stop when the edge overlap exceeds this threshold.
-        eval_transitions: int, default: 15e6
-                          The number of transitions that will be used for evaluating the validation performance, e.g.
-                          if the random walk length is 5, each random walk contains 4 transitions.
-        transitions_per_iter: int, default: 150000
-                              The number of transitions that will be generated in one batch. Higher means faster
-                              generation, but more RAM usage.
-        max_patience: int, default: 5
-                      Maximum evaluation steps without improvement of the validation accuracy to tolerate. Only
-                      applies to the VAL criterion.
-        eval_every: int, default: 500
-                    Evaluate the model every X iterations.
-        plot_every: int, default: -1
-                    Plot the generator/discriminator losses every X iterations. Set to None or a negative number
-                           to disable plotting.
-        save_directory: str, default: "../snapshots"
-                        The directory to save model snapshots to.
-        model_name: str, default: None
-                    Name of the model (will be used for saving the snapshots).
-        continue_training: bool, default: False
-                           Whether to start training without initializing the weights first. If False, weights will be
-                           initialized.
-
-        Returns
-        -------
-        log_dict: dict
-                  A dictionary with the following values observed during training:
-                  * The generator and discriminator losses
-                  * The validation performances (ROC and AP)
-                  * The edge overlap values between the generated and original graph
-                  * The sampled graphs for all evaluation steps.
-
-        """
-
         starting_time = time.time()
         saver = tf.train.Saver()
         timestr = time.strftime("%Y%m%d-%H%M%S")
@@ -1327,17 +1147,19 @@ class TGGAN:
                 save_file = "{}/{}_iter_{}.ckpt".format(save_directory, model_name, _it + 1)
                 d = saver.save(self.session, save_file)
                 log("**** Saving snapshots into {} ****".format(save_file))
-
-                Gs = Graphs(test_edges, N=self.N, tmax=self.params['t_end'], edge_contact_time=edge_contact_time)
-                FGs = Graphs(fake_graphs, N=self.N, tmax=self.params['t_end'], edge_contact_time=edge_contact_time)
-                mmd_avg_degree = MMD_Average_Degree_Distribution(Gs, FGs)
-                log('mmd_avg_degree: {}'.format(mmd_avg_degree))
-                log('Real Mean_Average_Degree_Distribution: \n{}'.format(Gs.Mean_Average_Degree_Distribution()))
-                log('Fake Mean_Average_Degree_Distribution: \n{}'.format(FGs.Mean_Average_Degree_Distribution()))
-                if early_stopping is not None:
-                    if mmd_avg_degree < early_stopping:
-                        log('**** end training because evaluation is reached ****')
-                        break
+                try:
+                    Gs = Graphs(test_edges, N=self.N, tmax=self.params['t_end'], edge_contact_time=edge_contact_time)
+                    FGs = Graphs(fake_graphs, N=self.N, tmax=self.params['t_end'], edge_contact_time=edge_contact_time)
+                    mmd_avg_degree = MMD_Average_Degree_Distribution(Gs, FGs)
+                    log('mmd_avg_degree: {}'.format(mmd_avg_degree))
+                    log('Real Mean_Average_Degree_Distribution: \n{}'.format(Gs.Mean_Average_Degree_Distribution()))
+                    log('Fake Mean_Average_Degree_Distribution: \n{}'.format(FGs.Mean_Average_Degree_Distribution()))
+                    if early_stopping is not None:
+                        if mmd_avg_degree < early_stopping:
+                            log('**** end training because evaluation is reached ****')
+                            break
+                except:
+                    print('evaluation got error! continue training ...')
 
                 t = time.time() - starting_time
                 log('**** end evaluation **** took {} seconds so far...'.format(int(t)))
@@ -1379,19 +1201,6 @@ class TGGAN:
         return log_dict
 
 def make_noise(shape, type="Gaussian"):
-    """
-    Generate random noise.
-
-    Parameters
-    ----------
-    shape: List or tuple indicating the shape of the noise
-    type: str, "Gaussian" or "Uniform", default: "Gaussian".
-
-    Returns
-    -------
-    noise tensor
-
-    """
 
     if type == "Gaussian":
         noise = tf.random_normal(shape)
@@ -1403,19 +1212,6 @@ def make_noise(shape, type="Gaussian"):
 
 
 def sample_gumbel(shape, eps=1e-20):
-    """
-    Sample from a uniform Gumbel distribution. Code by Eric Jang available at
-    http://blog.evjang.com/2016/11/tutorial-categorical-variational.html
-    Parameters
-    ----------
-    shape: Shape of the Gumbel noise
-    eps: Epsilon for numerical stability.
-
-    Returns
-    -------
-    Noise drawn from a uniform Gumbel distribution.
-
-    """
     """Sample from Gumbel(0, 1)"""
     U = tf.random_uniform(shape, minval=0, maxval=1)
     return -tf.log(-tf.log(U + eps) + eps)
@@ -1428,16 +1224,6 @@ def gumbel_softmax_sample(logits, temperature):
 
 
 def gumbel_softmax(logits, temperature, hard=False):
-    """Sample from the Gumbel-Softmax distribution and optionally discretize.
-    Args:
-        logits: [batch_size, n_class] unnormalized log-probs
-        temperature: non-negative scalar
-        hard: if True, take argmax, but differentiate w.r.t. soft sample y
-    Returns:
-        [batch_size, n_class] sample from the Gumbel-Softmax distribution.
-        If hard=True, then the returned sample will be one-hot, otherwise it will
-        be a probabilitiy distribution that sums to 1 across classes
-      """
     y = gumbel_softmax_sample(logits, temperature)
     if hard:
         y_hard = tf.cast(tf.equal(y, tf.reduce_max(y, 1, keepdims=True)), y.dtype)

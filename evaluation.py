@@ -2,6 +2,7 @@ from collections import Counter
 from itertools import product
 import numpy as np
 from numpy import sqrt
+import sparse
 import scipy
 import scipy.stats
 from scipy.io import savemat
@@ -664,6 +665,21 @@ class Graphs:
                 continue
         self.group_metric_results = group_metric_results
 
+        coords = np.c_[data[:, 1:3], np.arange(data.shape[0])].transpose()
+        print('0', coords.shape)
+        edge_total_counts = sparse.COO(coords, np.ones((data.shape[0],)), shape=(N, N, data.shape[0]))
+        print('1', edge_total_counts.shape)
+        edge_total_counts = edge_total_counts.sum(axis=2)
+        # edge_total_counts = sparse.clip(edge_total_counts, a_max=1)
+        edge_total_counts = edge_total_counts.sum(axis=1).todense()
+        print('2', edge_total_counts.shape)
+        self.edge_total_counts = edge_total_counts
+
+        # edge_total_counts = np.zeros((N, N), dtype=int)
+        # for i in range(data.shape[0]):
+        #     edge_total_counts[int(data[i, 1]), int(data[i, 2])] += 1
+        # self.edge_total_counts = edge_total_counts
+
     def Sample_Average_Degree_Distribution(self):
         sample_avg_degree = []
         for one_graph in self.graph_list:
@@ -897,7 +913,7 @@ def Plot_Discrete_Graph(data_name, file_name, ax=None, nodesize=0.1, show=False)
         methods = ['netgan', 'dsbm', 'wenbin']
         if ax is None: fig, ax = plt.subplots(1, len(methods)+1, figsize=(20, 5))
     else:
-        methods = ['tggan', 'graphrnn', 'netgan', 'graphvae', 'dsbm', 'wenbin']
+        methods = ['tggan', 'taggen', 'graphrnn', 'netgan', 'graphvae', 'dsbm', 'wenbin']
         if ax is None: fig, ax = plt.subplots(1, len(methods)+1, figsize=(20, 5))
 
     # plot
@@ -908,9 +924,9 @@ def Plot_Discrete_Graph(data_name, file_name, ax=None, nodesize=0.1, show=False)
     for i in range(len(methods)):
         method_name = methods[i]
         dataset = "{}_{}".format(method_name, data_name)
-        print('dataset', dataset)
+        # print('dataset', dataset)
         N, n_times, tmax, time_interval, thres, edge_contact_time, fake_graphs = get_fake_graph_data(dataset)
-        print('fake_graphs', fake_graphs)
+        # print('fake_graphs', fake_graphs)
         fake_tg = convert_to_weighted_graph(fake_graphs, N, time_interval, thres)
         fake_nodes_list = np.unique(fake_tg.network.values[:, 1:3].reshape(1, -1)[0])
         max_node = N
@@ -924,12 +940,14 @@ def Plot_Discrete_Graph(data_name, file_name, ax=None, nodesize=0.1, show=False)
                                plotedgeweights=plotedgeweights, edgeweightscalar=edgeweightscalar,
                                cmap=cmap)
 
-        yticklabels = [str(i) if i in fake_nodes_list else '' for i in range(min_node, max_node + 1)]
+        # yticklabels = [str(i) if i in fake_nodes_list else '' for i in range(min_node, max_node + 1)]
+        yticklabels = []
         # ax_fake.grid(axis='y')
         ax_fake.set_ylim([min_node, max_node])
         if 'protein' in data_name: ax_fake.set_xlim([min_time, max_time])
         ax_fake.set_yticklabels(yticklabels)
-        ax_fake.set_title('{}) {} - {}'.format(i+2, method_name, data_name), fontsize=14)
+        ax_fake.set_title('{}) {}'.format(i + 2, method_name), fontsize=14)
+        # ax_fake.set_title('{}) {} - {}'.format(i+2, method_name, data_name), fontsize=14)
 
     # plot real
     ax_real = ax[0]
@@ -938,8 +956,10 @@ def Plot_Discrete_Graph(data_name, file_name, ax=None, nodesize=0.1, show=False)
     real_nodes_list = np.unique(real_tg.network.values[:, 1:3].reshape(1, -1)[0])
     ax_real = real_tg.plot('slice_plot', ax=ax_real, nodesize=nodesize,
                            plotedgeweights=True, edgeweightscalar=5, cmap="Dark2")
-    yticklabels = [str(i) if i in real_nodes_list else '' for i in range(min_node, max_node + 1)]
+    # yticklabels = [str(i) if i in real_nodes_list else '' for i in range(min_node, max_node + 1)]
+    yticklabels = []
     # ax_real.grid(axis='y')
+    ax_real.set_yticks([])
     ax_real.set_ylim([min_node, max_node])
     if 'protein' in data_name: ax_real.set_xlim([min_time, max_time])
     ax_real.set_yticklabels(yticklabels)
@@ -947,11 +967,12 @@ def Plot_Discrete_Graph(data_name, file_name, ax=None, nodesize=0.1, show=False)
 
     for ax_i in ax:
         ax_i.set_ylim([min_node, max_node])
+        ax_i.set_yticks([])
         ax_i.grid(False)
 
     if show: plt.show()
     plt.tight_layout()
-    plt.savefig(file_name, dpi=120)
+    plt.savefig(file_name, dpi=300)
     plt.close()
     return ax
 
@@ -1068,7 +1089,7 @@ def get_fake_graph_data(dataset, n_samples=100):
             l = 4
             n_times = 5
             tmax = 1.0
-            edge_contact_time = 0.1
+            edge_contact_time = 0.01
             time_interval = 1. / n_times
             thres = 0.01
 
@@ -1087,7 +1108,7 @@ def get_fake_graph_data(dataset, n_samples=100):
 
             _it = '20200207-140714_assembled_graph_iter_13000'
             matlab_file = 'fake_graph_TGGAN_scale-free-nodes-2500_iter_13000'
-            dir = 'outputs-scale-free-nodes-2500-samples-100-best'
+            dir = 'outputs-scale-free-nodes-2500-best'
             fake_file = './{}/{}.npz'.format(dir, _it)
 
         res = np.load(fake_file)
@@ -1102,6 +1123,68 @@ def get_fake_graph_data(dataset, n_samples=100):
             scipy.io.savemat('./{}/{}.mat'.format(dir, matlab_file),
                              dict(fake_graphs=fake_graphs))
 
+    if 'taggen' in dataset:
+        if 'auth' in dataset:
+            N = 27
+            l = 4
+            n_times = 8
+            tmax = 1.0
+            edge_contact_time = 0.02
+            time_interval = 1. / n_times
+            thres = 0.01
+            # n_samples = 2000
+            fake_file = 'baselines/taggen_output/fake_graph_taggen_auth.txt'
+        elif 'metro' in dataset:
+            N = 91
+            l = 4
+            n_times = 6
+            tmax = 1.0
+            edge_contact_time = 0.02
+            time_interval = 1. / n_times
+            thres = 0.01
+            fake_file = 'baselines/taggen_output/fake_graph_taggen_metro.txt'
+        elif 'scale-free-nodes-100' in dataset:
+            N = 100
+            l = 4
+            n_times = 20
+            tmax = 1.0
+            edge_contact_time = 0.001
+            time_interval = 1. / n_times
+            thres = 0.01
+            # n_samples = 2000
+            fake_file = 'baselines/taggen_output/fake_graph_taggen_SF_100_200.txt'
+        elif 'scale-free-nodes-500' in dataset:
+            N = 500
+            n_times = 20
+            tmax = 1.0
+            edge_contact_time = 0.01
+            time_interval = 1. / n_times
+            thres = 0.01
+            # n_samples = 2000
+            fake_file = 'baselines/taggen_output/fake_graph_taggen_SF_500_100.txt'
+        elif 'scale-free-nodes-2500' in dataset:
+            N = 2500
+            n_times = 20
+            tmax = 1.0
+            edge_contact_time = 0.01
+            time_interval = 1. / n_times
+            thres = 0.01
+            # n_samples = 2000
+            fake_file = 'baselines/taggen_output/fake_graph_taggen_SF_2500_100.txt'
+
+        fake_graphs = np.loadtxt(fake_file)
+        d_col = 0
+        t_col = 3
+        # fake_graphs = fake_graphs[fake_graphs[:, d_col] < n_samples]
+        fake_graphs = fake_graphs.astype(float)
+        fake_graphs[:, t_col] = (fake_graphs[:, t_col] + 0.5) * time_interval + edge_contact_time / 2
+        if 'scale-free-nodes' in dataset:
+            n_times = 5
+            time_interval = 1. / n_times
+        elif 'auth' in dataset:
+            n_times = 4
+            time_interval = 1. / n_times
+
     if 'wenbin' in dataset:
         if 'auth' in dataset:
             N = 27
@@ -1113,7 +1196,7 @@ def get_fake_graph_data(dataset, n_samples=100):
             thres = 0.01
             # n_samples = 2000
             fake_file = 'baselines/outputs/fake_graph_wenbin_auth_user_generated.txt'
-        if 'metro' in dataset:
+        elif 'metro' in dataset:
             N = 91
             l = 4
             n_times = 6
@@ -1123,7 +1206,7 @@ def get_fake_graph_data(dataset, n_samples=100):
             thres = 0.01
             n_samples = 1
             fake_file = 'baselines/outputs/fake_graph_wenbin_metro_user_generated.txt'
-        if 'protein' in dataset:
+        elif 'protein' in dataset:
             N = 8
             l = 4
             n_times = 100
@@ -1133,7 +1216,16 @@ def get_fake_graph_data(dataset, n_samples=100):
             thres = 0.01
             # n_samples = 20
             fake_file = 'baselines/outputs/fake_graph_wenbin_protein100_user_generated.txt'
-
+        elif 'scale-free-nodes-100' in dataset:
+            N = 100
+            l = 4
+            n_times = 5
+            tmax = 1.0
+            edge_contact_time = 0.01
+            time_interval = 1. / n_times
+            thres = 0.01
+            # n_samples = 2000
+            fake_file = './baselines/outputs/GraphRNN_RNN_simulation_nodes_100_samples_200_epoch_3000.txt'
         fake_graphs = np.loadtxt(fake_file)
         d_col = 0
         t_col = 3
@@ -1281,51 +1373,94 @@ def get_fake_graph_data(dataset, n_samples=100):
 
 if __name__ == "__main__":
 
+    save_directory = './evaluation_outputs'
+    if not os.path.isdir(save_directory):
+        os.makedirs(save_directory)
+
+    # res = scipy.io.loadmat('baselines/taggen_output/scale_free_nodes_2500_taggen_all_metrics_Oct-01-2020_23-36-38.mat')
+    # print(res)
+
+    ### mmd purposes
+    # dataset = 'tggan_auth'
+    # dataset = 'tggan_metro'
+    # dataset = 'tggan_scale-free-nodes-100'
+    # dataset = 'tggan_scale-free-nodes-500'
+    # dataset = 'tggan_scale-free-nodes-2500'
+
+    # dataset = 'taggen_auth'
+    # dataset = 'taggen_metro'
+    # dataset = 'taggen_scale-free-nodes-100'
+    # dataset = 'taggen_scale-free-nodes-500'
+    # dataset = 'taggen_scale-free-nodes-2500'
+
+    # dataset = 'graphrnn_auth'
+    # dataset = 'graphrnn_metro'
+    # dataset = 'graphrnn_scale-free-nodes-100'
+    # dataset = 'graphrnn_scale-free-nodes-500'
+    # dataset = 'graphrnn_scale-free-nodes-2500'
+
+    # dataset = 'netgan_auth'
+    # dataset = 'netgan_metro'
+    # dataset = 'netgan_scale-free-nodes-100'
+    # dataset = 'netgan_scale-free-nodes-500'
+    dataset = 'netgan_scale-free-nodes-2500'
+
+    # dataset = 'graphvae_auth'
+    # dataset = 'graphvae_metro'
+    # dataset = 'graphvae_scale-free-nodes-100'
+
+    # dataset = 'dsbm_auth'
+    # dataset = 'dsbm_metro'
+    # dataset = 'dsbm_scale-free-nodes-100'
+
+    # train_ratio = 0.8
+
+    N, n_times, tmax, time_interval, thres, edge_contact_time, fake_graphs = get_fake_graph_data(dataset)
+    real_graphs = get_real_graph_data(dataset, time_interval, edge_contact_time)
+
+    # edge_contact_time = 0.1
+    Gs = Graphs(real_graphs, N, tmax, edge_contact_time)
+    if '2500' in dataset: fake_graphs = fake_graphs[fake_graphs[:, 0] < 100]
+    FGs = Graphs(fake_graphs, N, tmax, edge_contact_time)
+
+    ### compute scale parameter Sample_Mean_Degree
+    is_out_degree = 1
+    in_degree_count_real = Gs.edge_total_counts
+    in_degree_count_fake = FGs.edge_total_counts
+    # in_degree_count_real = np.mean(Gs.Sample_Average_Degree_Distribution(), axis=0)
+    # in_degree_count_fake = np.mean(FGs.Sample_Average_Degree_Distribution(), axis=0)
+
+    # print(in_degree_count_real)
+    # plt.plot(np.arange(in_degree_count_real.shape[0]), in_degree_count_real)
+    # plt.savefig('evaluation_outputs/{}_in_degree_real.png'.format(dataset), dpt=120)
+    # plt.close()
+    in_degree_count_real_nonzero = in_degree_count_real[in_degree_count_real > 0]
+    slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(
+        np.arange(in_degree_count_real_nonzero.shape[0]), np.log(in_degree_count_real_nonzero))
+    print(dataset, 'real scale factor', slope)
+    # print(in_degree_count_fake)
+    # plt.plot(in_degree_count_fake)
+    # plt.savefig('evaluation_outputs/{}_in_degree_fake.png'.format(dataset), dpt=120)
+    # plt.close()
+    in_degree_count_fake_nonzero = in_degree_count_fake[in_degree_count_fake > 0]
+    slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(
+        np.arange(in_degree_count_fake_nonzero.shape[0]), np.log(in_degree_count_fake_nonzero))
+    print(dataset, 'fake scale factor', slope)
+
+    # print(np.log(np.sum(Gs.Sample_Average_Degree_Distribution(), axis=0)))
+    # print(np.log(np.sum(FGs.Sample_Average_Degree_Distribution(), axis=0)))
+
+    ### plot graphs
     # data_name = 'auth'
     # data_name = 'metro'
     # data_name = 'scale-free-nodes-100'
     # data_name = 'protein'
 
-    save_directory = './evaluation_outputs'
-    if not os.path.isdir(save_directory):
-        os.makedirs(save_directory)
-
     # Plot_Discrete_Graph(data_name=data_name,
     #                     file_name='{}/discrete_{}'.format(save_directory, data_name))
+    # Plot_Graph(Gs.graph_list[n_times], '{}/{}_real'.format(save_directory, dataset.split('_')[1]))
+    # Plot_Graph(FGs.graph_list[n_times], '{}/{}_fake'.format(save_directory, dataset))
 
-    # ### mmd purposes
-    # # dataset = 'tggan_auth'
-    # # dataset = 'tggan_metro'
-    # # dataset = 'graphrnn_auth'
-    # # dataset = 'graphrnn_metro'
-    # # dataset = 'graphvae_auth'
-    # # dataset = 'graphvae_metro'
-    # # dataset = 'dsbm_auth'
-    # # dataset = 'dsbm_metro'
-    # # dataset = 'tggan_scale-free-nodes-100'
-    # # dataset = 'graphrnn_scale-free-nodes-100'
-    # dataset = 'graphrnn_scale-free-nodes-2500'
-    # # dataset = 'graphvae_scale-free-nodes-100'
-    # # dataset = 'dsbm_scale-free-nodes-100'
-    #
-    # # dataset = 'netgan_auth'
-    # # dataset = 'netgan_metro'
-    # # dataset = 'netgan_scale-free-nodes-100'
-    # # dataset = 'netgan_scale-free-nodes-500'
-    # # dataset = 'netgan_scale-free-nodes-2500'
-    #
-    # # dataset = 'tggan_scale-free-nodes-500'
-    # # dataset = 'tggan_scale-free-nodes-2500'
-    #
-    # train_ratio = 0.8
-    #
-    # N, n_times, tmax, time_interval, thres, edge_contact_time, fake_graphs = get_fake_graph_data(dataset)
-    # real_graphs = get_real_graph_data(dataset, time_interval, edge_contact_time)
-    #
-    #
-    # Gs = Graphs(real_graphs, N, tmax, edge_contact_time)
-    # # Plot_Graph(Gs.graph_list[n_times], '{}/{}_real'.format(save_directory, dataset.split('_')[1]))
-    #
     # print('Real Mean_Average_Degree_Distribution:\n', Gs.Mean_Average_Degree_Distribution())
     # print('Real Mean_Degree:\n', Gs.Mean_Mean_Degree())
     # print('Real Mean_Average_Group_Size_Distribution:\n', Gs.Mean_Average_Group_Size_Distribution())
@@ -1333,9 +1468,7 @@ if __name__ == "__main__":
     # print('Real Mean_Mean_Coordination_Number:\n', Gs.Mean_Mean_Coordination_Number())
     #
     # print('fake_graphs', fake_graphs)
-    # FGs = Graphs(fake_graphs, N, tmax, edge_contact_time)
-    # # Plot_Graph(FGs.graph_list[n_times], '{}/{}_fake'.format(save_directory, dataset))
-    #
+
     # print('Fake Mean_Average_Degree_Distribution:\n', FGs.Mean_Average_Degree_Distribution())
     # print('Fake Mean_Degree:\n', FGs.Mean_Mean_Degree())
     # print('Fake Mean_Average_Group_Size_Distribution:\n', FGs.Mean_Average_Group_Size_Distribution())
@@ -1419,83 +1552,92 @@ if __name__ == "__main__":
     #     print('other error happened:\n{}'.format(e))
     # print('\n')
 
-    ### running time
-    file_name = 'running_time_nodes'
-    timing_100 = np.loadtxt('./timing_results/simulation-scale-free-nodes-100_iterations_100000.txt')
-    timing_500 = np.loadtxt('./timing_results/simulation-scale-free-nodes-500_iterations_1000.txt')
-    timing_2500 = np.loadtxt('./timing_results/simulation-scale-free-nodes-2500_iterations_100000.txt')
-    m = 200
-    n = m + 100
-    node_list = [100, 500, 2500]
-    tggan_time= np.log10([timing_100[m:n].mean(), timing_500[m:n].mean(), timing_2500[m:n].mean()])
-
-    graphrnn_100 = np.load(
-        './timing_results/GraphRNN_RNN_simulation_nodes_100_samples_200_times_5_4_128_pred__nodes_100_days_200_time_0_GraphRNN_RNN.npy')
-    graphrnn_500 = np.load(
-        './timing_results/GraphRNN_VAE_conditional_simulation_nodes_500_samples_100_times_5_4_128_pred__nodes_500_days_100_time_0_GraphRNN_VAE_conditional.npy')
-    graphrnn_2500 = np.load(
-        './timing_results/GraphRNN_RNN_simulation_nodes_2500_samples_100_times_5_4_128_pred__nodes_2500_days_100_time_0_GraphRNN_RNN.npy')
-    graphrnn_time = np.log10([graphrnn_100[m:n].mean(), graphrnn_500[m:n].mean(), graphrnn_2500[m:n].mean()])
-
-    graphvae_100 = np.load(
-        './timing_results/GraphRNN_VAE_conditional_simulation_nodes_100_samples_200_times_5_4_128_pred__nodes_100_days_200_time_0_GraphRNN_VAE_conditional.npy'
-    )
-    graphvae_500 = np.load(
-        './timing_results/GraphRNN_VAE_conditional_simulation_nodes_500_samples_100_times_5_4_128_pred__nodes_500_days_100_time_0_GraphRNN_VAE_conditional.npy'
-    )
-    graphvae_time = np.log10([graphvae_100[m:n].mean(), graphvae_500[m:n].mean()*5])
-
-    dsbm_100 = 1.9352e+03/20
-    dsbm_time = [np.log10(dsbm_100)]
-
-    netgan_time = np.array([272, 486, 655])
-    netgan_time = np.log10(netgan_time/200)
-
-    fig, ax = plt.subplots(1, 1, figsize=(6, 3))
-    ax.plot(node_list, tggan_time, c='black', marker='s', label='TG-GAN')
-    ax.plot(node_list, graphrnn_time, c='b', marker='s', label='GraphRNN')
-    ax.plot(node_list, netgan_time, c='purple', marker='s', label='NetGAN')
-    ax.plot(node_list[0:2], graphvae_time, c='r', marker='s', label='GraphVAE')
-    ax.plot(node_list[0:1], dsbm_time, c='orange', marker='s', label='DSBM')
-    ax.set_xlabel('Number of nodes', fontsize=18)
-    ax.set_xticks(node_list)
-    ax.set_ylabel('Running Time \n[per epoch]', fontsize=18)
-    y_ticks = [-1, 0, 1, 2]
-    ax.set_yticks(y_ticks)
-    ax.set_yticklabels([r'$10^{%d}$' % i for i in y_ticks])
-    ax.tick_params(labelsize=16)
-    ax.legend(fontsize=16)
-    plt.subplots_adjust(left=0.2, bottom=0.2)
-    plt.savefig('{}/{}.png'.format(save_directory, file_name), dpi=120)
-
-    ### running time with time snapshots
-    file_name = 'running_time_snapshots'
-
-    snapshot_list = [5, 10, 20]
-    print([netgan_time[0]*s/5 for s in snapshot_list])
-    print([graphrnn_time[0]*s/5 for s in snapshot_list])
-
-    fig, ax = plt.subplots(1, 1, figsize=(6, 3))
-    ax.plot(snapshot_list, [tggan_time[0] for s in snapshot_list],
-            c='black', marker='s', label='TG-GAN')
-    ax.plot(snapshot_list, [graphrnn_time[0]*s/5 for s in snapshot_list],
-            c='b', marker='s', label='GraphRNN')
-    ax.plot(snapshot_list, [netgan_time[0]*s/5 for s in snapshot_list],
-            c='purple', marker='s', label='NetGAN')
-    ax.plot(snapshot_list[0:2], [graphvae_time[0]*s/5 for s in snapshot_list[0:2]],
-            c='r', marker='s', label='GraphVAE')
-    ax.plot(snapshot_list[0:1], [dsbm_time[0]*s/5 for s in snapshot_list[0:1]],
-            c='orange', marker='s', label='DSBM')
-    ax.set_xlabel('Number of snapshots', fontsize=18)
-    ax.set_xticks(snapshot_list)
-    ax.set_ylabel('Running Time \n[per epoch]', fontsize=18)
-    y_ticks = [-1, 0, 1, 2]
-    ax.set_yticks(y_ticks)
-    ax.set_yticklabels([r'$10^{%d}$' % i for i in y_ticks])
-    ax.tick_params(labelsize=16)
-    ax.legend(fontsize=16)
-    plt.subplots_adjust(left=0.2, bottom=0.2)
-    plt.savefig('{}/{}.png'.format(save_directory, file_name), dpi=120)
+    ## running time
+    # file_name = 'running_time_nodes'
+    # timing_100 = np.loadtxt('./timing_results/simulation-scale-free-nodes-100_iterations_100000.txt')
+    # timing_500 = np.loadtxt('./timing_results/simulation-scale-free-nodes-500_iterations_1000.txt')
+    # timing_2500 = np.loadtxt('./timing_results/simulation-scale-free-nodes-2500_iterations_100000.txt')
+    # m = 200
+    # n = m + 100
+    # node_list = [100, 500, 2500]
+    # tggan_time= np.log10([timing_100[m:n].mean(), timing_500[m:n].mean(), timing_2500[m:n].mean()])
+    #
+    # graphrnn_100 = np.load(
+    #     './timing_results/GraphRNN_RNN_simulation_nodes_100_samples_200_times_5_4_128_pred__nodes_100_days_200_time_0_GraphRNN_RNN.npy')
+    # graphrnn_500 = np.load(
+    #     './timing_results/GraphRNN_VAE_conditional_simulation_nodes_500_samples_100_times_5_4_128_pred__nodes_500_days_100_time_0_GraphRNN_VAE_conditional.npy')
+    # graphrnn_2500 = np.load(
+    #     './timing_results/GraphRNN_RNN_simulation_nodes_2500_samples_100_times_5_4_128_pred__nodes_2500_days_100_time_0_GraphRNN_RNN.npy')
+    # graphrnn_time = np.log10([graphrnn_100[m:n].mean(), graphrnn_500[m:n].mean(), graphrnn_2500[m:n].mean()])
+    #
+    # graphvae_100 = np.load(
+    #     './timing_results/GraphRNN_VAE_conditional_simulation_nodes_100_samples_200_times_5_4_128_pred__nodes_100_days_200_time_0_GraphRNN_VAE_conditional.npy'
+    # )
+    # graphvae_500 = np.load(
+    #     './timing_results/GraphRNN_VAE_conditional_simulation_nodes_500_samples_100_times_5_4_128_pred__nodes_500_days_100_time_0_GraphRNN_VAE_conditional.npy'
+    # )
+    # graphvae_time = np.log10([graphvae_100[m:n].mean(), graphvae_500[m:n].mean()*5])
+    #
+    # dsbm_100 = 1.9352e+03/20
+    # dsbm_time = [np.log10(dsbm_100)]
+    #
+    # netgan_time = np.array([272, 486, 655])
+    # netgan_time = np.log10(netgan_time/200)
+    #
+    # taggen_time = np.log10([11.4753, 11.6185, 11.6189]) - 1
+    # print('taggen:', taggen_time)
+    # print('netgan:', netgan_time)
+    # print('graphrnn:', graphrnn_time)
+    # print('graphvae:', graphvae_time)
+    # print('dsbm:', dsbm_time)
+    #
+    # fig, ax = plt.subplots(1, 1, figsize=(7, 4))
+    # ax.plot(node_list, tggan_time, c='black', marker='s', label='TG-GAN')
+    # ax.plot(node_list, taggen_time, c='sienna', marker='s', label='TagGen')
+    # ax.plot(node_list, graphrnn_time, c='b', marker='s', label='GraphRNN')
+    # ax.plot(node_list, netgan_time, c='purple', marker='s', label='NetGAN')
+    # ax.plot(node_list[0:2], graphvae_time, c='r', marker='s', label='GraphVAE')
+    # ax.plot(node_list[0:1], dsbm_time, c='orange', marker='s', label='DSBM')
+    # ax.set_xlabel('Number of nodes', fontsize=18)
+    # ax.set_xticks(node_list)
+    # ax.set_ylabel('Running Time \n[per epoch]', fontsize=18)
+    # y_ticks = [-1, 0, 1, 2]
+    # ax.set_yticks(y_ticks)
+    # ax.set_yticklabels([r'$10^{%d}$' % i for i in y_ticks])
+    # ax.tick_params(labelsize=16)
+    # ax.legend(fontsize=16)
+    # plt.subplots_adjust(left=0.2, bottom=0.2)
+    # plt.savefig('{}/{}.png'.format(save_directory, file_name), dpi=150)
+    #
+    # ### running time with time snapshots
+    # file_name = 'running_time_snapshots'
+    #
+    # snapshot_list = [5, 10, 20]
+    # print([netgan_time[0]*s/5 for s in snapshot_list])
+    # print([graphrnn_time[0]*s/5 for s in snapshot_list])
+    #
+    # fig, ax = plt.subplots(1, 1, figsize=(7, 4))
+    # ax.plot(snapshot_list, [tggan_time[0] for s in snapshot_list],
+    #         c='black', marker='s', label='TG-GAN')
+    # ax.plot(snapshot_list, taggen_time, c='sienna', marker='s', label='TagGen')
+    # ax.plot(snapshot_list, [graphrnn_time[0]*s/5 for s in snapshot_list],
+    #         c='b', marker='s', label='GraphRNN')
+    # ax.plot(snapshot_list, [netgan_time[0]*s/5 for s in snapshot_list],
+    #         c='purple', marker='s', label='NetGAN')
+    # ax.plot(snapshot_list[0:2], [graphvae_time[0]*s/5 for s in snapshot_list[0:2]],
+    #         c='r', marker='s', label='GraphVAE')
+    # ax.plot(snapshot_list[0:1], [dsbm_time[0]*s/5 for s in snapshot_list[0:1]],
+    #         c='orange', marker='s', label='DSBM')
+    # ax.set_xlabel('Number of snapshots', fontsize=18)
+    # ax.set_xticks(snapshot_list)
+    # ax.set_ylabel('Running Time \n[per epoch]', fontsize=18)
+    # y_ticks = [-1, 0, 1, 2]
+    # ax.set_yticks(y_ticks)
+    # ax.set_yticklabels([r'$10^{%d}$' % i for i in y_ticks])
+    # ax.tick_params(labelsize=16)
+    # ax.legend(fontsize=16)
+    # plt.subplots_adjust(left=0.2, bottom=0.2)
+    # plt.savefig('{}/{}.png'.format(save_directory, file_name), dpi=150)
 
     ### loss function plot
     # file_name = 'tggan_loss'

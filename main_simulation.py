@@ -67,19 +67,19 @@ if __name__ == '__main__':
     parser.add_argument("-ne", "--n_eval_loop", default=10, type=int,
                         help="number of walk loops")
 
-    parser.add_argument("-mi", "--max_iters", default=100000, type=int,
-                        help="max iterations")
-    parser.add_argument("-ev", "--eval_every", default=1000, type=int,
-                        help="evaluation interval of epochs")
-    parser.add_argument("-pe", "--plot_every", default=1000, type=int,
-                        help="plot generated graph interval of epochs")
-
-    # parser.add_argument("-mi", "--max_iters", default=1000, type=int,
+    # parser.add_argument("-mi", "--max_iters", default=100000, type=int,
     #                     help="max iterations")
-    # parser.add_argument("-ev", "--eval_every", default=500, type=int,
+    # parser.add_argument("-ev", "--eval_every", default=1000, type=int,
     #                     help="evaluation interval of epochs")
-    # parser.add_argument("-pe", "--plot_every", default=500, type=int,
+    # parser.add_argument("-pe", "--plot_every", default=1000, type=int,
     #                     help="plot generated graph interval of epochs")
+
+    parser.add_argument("-mi", "--max_iters", default=10, type=int,
+                        help="max iterations")
+    parser.add_argument("-ev", "--eval_every", default=5, type=int,
+                        help="evaluation interval of epochs")
+    parser.add_argument("-pe", "--plot_every", default=5, type=int,
+                        help="plot generated graph interval of epochs")
 
     parser.add_argument("-te", "--is_test", default=False, type=bool,
                         help="if this is a testing period.")

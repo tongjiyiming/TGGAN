@@ -40,7 +40,7 @@ if __name__ == '__main__':
     # DeepTemporalWalk
     parser.add_argument("-bs", "--batch_size", default=32, type=int,
                         help="random walks batch size in DeepTemporalWalk")
-    parser.add_argument("-lr", "--learningrate", default=0.003, type=float,
+    parser.add_argument("-lr", "--learningrate", default=0.0003, type=float,
                         help="if this run should run all evaluations")
     parser.add_argument("-rl", "--rw_len", default=4, type=int,
                         help="random walks maximum length in DeepTemporalWalk")

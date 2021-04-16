@@ -246,6 +246,215 @@ def convert_graphs(fake_graphs):
             tmp_list = np.r_[tmp_list, d_graph]
     return tmp_list
 
+def plot_comparisons(fake_graphs, fake_x_t0, real_walks, real_x_t0, train_edges, test_edges, t_end, n_nodes, output_directory, epoch, log):
+    try:
+        fake_walks = fake_graphs.reshape(-1, 3)
+        fake_mask = fake_walks[:, 0] > -1
+        fake_walks = fake_walks[fake_mask]
+        fake_x_t0 = fake_x_t0.reshape(-1, 3)
+
+        real_walks = real_walks.reshape(-1, 3)
+        real_mask = real_walks[:, 0] > -1
+        real_walks = real_walks[real_mask]
+        real_x_t0 = real_x_t0.reshape(-1, 3)
+
+        # truth_train_walks = train_edges[:, 1:3]
+        truth_train_time = train_edges[:, 3:]
+        # truth_train_res_time = self.params['t_end'] - truth_train_time
+        truth_train_res_time = t_end - truth_train_time
+        truth_train_walks = np.concatenate([train_edges[:, 1:3], truth_train_res_time], axis=1)
+        truth_train_x_t0 = np.c_[np.zeros((len(train_edges), 1)), truth_train_res_time]
+        truth_train_x_t0 = np.r_[truth_train_x_t0, np.ones((len(train_edges), 2))]
+
+        truth_test_time = test_edges[:, 3:]
+        truth_test_res_time = t_end - truth_test_time
+        truth_test_walks = np.c_[test_edges[:, 1:3], truth_test_res_time]
+        truth_test_x_t0 = np.c_[np.zeros((len(test_edges), 1)), truth_test_res_time]
+        truth_test_x_t0 = np.r_[truth_test_x_t0, np.ones((len(test_edges), 2))]
+
+        fake_e_list, fake_e_counts = np.unique(fake_walks[:, 0:2], return_counts=True, axis=0)
+        real_e_list, real_e_counts = np.unique(real_walks[:, 0:2], return_counts=True, axis=0)
+        truth_train_e_list, truth_train_e_counts = np.unique(truth_train_walks[:, 0:2], return_counts=True,
+                                                             axis=0)
+        truth_test_e_list, truth_test_e_counts = np.unique(truth_test_walks[:, 0:2], return_counts=True,
+                                                           axis=0)
+        truth_e_list, truth_e_counts = np.unique(
+            np.r_[truth_test_walks[:, 0:2], truth_test_walks[:, 0:2]], return_counts=True, axis=0)
+        n_e = len(truth_e_list)
+
+        real_x_list, real_x_counts = np.unique(real_x_t0[:, 0], return_counts=True)
+        fake_x_list, fake_x_counts = np.unique(fake_x_t0[:, 0], return_counts=True)
+        truth_x_list, truth_x_counts = real_x_list, real_x_counts
+
+        real_len_list, real_len_counts = np.unique(real_x_t0[:, 2], return_counts=True)
+        fake_len_list, fake_len_counts = np.unique(fake_x_t0[:, 2], return_counts=True)
+        truth_len_list, truth_len_counts = real_len_list, real_len_counts
+
+        fig = plt.figure(figsize=(2 * 9, 2 * 9))
+        fig.suptitle('Truth, Real, and Fake edges comparisons')
+        dx = 0.3
+        dy = dx
+        zpos = 0
+
+        fake_ax = fig.add_subplot(221, projection='3d')
+        fake_ax.bar3d(fake_e_list[:, 0], fake_e_list[:, 1], zpos, dx, dy, fake_e_counts)
+        # fake_ax.set_xlim([0, self.N])
+        fake_ax.set_xlim([0, n_nodes])
+        fake_ax.set_ylim([0, n_nodes])
+        fake_ax.set_xticks(range(n_nodes))
+        fake_ax.set_yticks(range(n_nodes))
+        fake_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(n_nodes)])
+        fake_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(n_nodes)])
+        fake_ax.set_title('fake edges number: {}'.format(len(fake_e_list)))
+
+        real_ax = fig.add_subplot(222, projection='3d')
+        real_ax.bar3d(real_e_list[:, 0], real_e_list[:, 1], zpos, dx, dy, real_e_counts)
+        real_ax.set_xlim([0, n_nodes])
+        real_ax.set_ylim([0, n_nodes])
+        real_ax.set_xticks(range(n_nodes))
+        real_ax.set_yticks(range(n_nodes))
+        real_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(n_nodes)])
+        real_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(n_nodes)])
+        real_ax.set_title('real edges number: {}'.format(len(real_e_list)))
+
+        truth_ax = fig.add_subplot(223, projection='3d')
+        truth_ax.bar3d(truth_train_e_list[:, 0], truth_train_e_list[:, 1], zpos, dx, dy,
+                       truth_train_e_counts)
+        truth_ax.set_xlim([0, n_nodes])
+        truth_ax.set_ylim([0, n_nodes])
+        truth_ax.set_xticks(range(n_nodes))
+        truth_ax.set_yticks(range(n_nodes))
+        truth_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(n_nodes)])
+        truth_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(n_nodes)])
+        truth_ax.set_title('truth train edges number: {}'.format(len(truth_train_e_list)))
+
+        truth_ax = fig.add_subplot(222, projection='3d')
+        truth_ax.bar3d(truth_test_e_list[:, 0], truth_test_e_list[:, 1], zpos, dx, dy, truth_test_e_counts)
+        truth_ax.set_xlim([0, n_nodes])
+        truth_ax.set_ylim([0, n_nodes])
+        truth_ax.set_xticks(range(n_nodes))
+        truth_ax.set_yticks(range(n_nodes))
+        truth_ax.set_xticklabels([str(n) if n % 5 == 0 else '' for n in range(n_nodes)])
+        truth_ax.set_yticklabels([str(n) if n % 5 == 0 else '' for n in range(n_nodes)])
+        truth_ax.set_title('truth test edges number: {}'.format(len(truth_test_e_list)))
+
+        plt.tight_layout()
+        plt.savefig('{}/iter_{}_edges_counts_validation.png'.format(output_directory, epoch), dpi=90)
+        plt.close()
+
+        fig, ax = plt.subplots(n_e + 4, 4, figsize=(4 * 6, (n_e + 4) * 4))
+        i = 0
+        real_ax = ax[i, 0]
+        real_ax.bar(real_x_list, real_x_counts)
+        real_ax.set_xlim([-1, 2])
+        real_ax.set_title('real start x number: {}'.format(len(real_x_list)))
+
+        fake_ax = ax[i, 1]
+        fake_ax.bar(fake_x_list, fake_x_counts)
+        fake_ax.set_xlim([-1, 2])
+        fake_ax.set_title('fake start x number: {}'.format(len(fake_x_list)))
+
+        truth_ax = ax[i, 2]
+        truth_ax.bar(truth_x_list, truth_x_counts)
+        truth_ax.set_xlim([-1, 2])
+        truth_ax.set_title('truth start x number: {}'.format(len(truth_x_list)))
+        truth_ax = ax[i, 3]
+        truth_ax.bar(truth_x_list, truth_x_counts)
+        truth_ax.set_xlim([-1, 2])
+        truth_ax.set_title('truth start x number: {}'.format(len(truth_x_list)))
+
+        i = 1
+        max_xlim = max(max(real_len_list), max(fake_len_list)) + 1
+        min_xlim = min(min(real_len_list), min(fake_len_list)) - 1
+        real_ax = ax[i, 0]
+        real_ax.bar(real_len_list, real_len_counts)
+        real_ax.set_xlim([min_xlim, max_xlim])
+        real_ax.set_title('real sampler ends: {}'.format(len(real_len_list)))
+
+        fake_ax = ax[i, 1]
+        fake_ax.bar(fake_len_list, fake_len_counts)
+        fake_ax.set_xlim([min_xlim, max_xlim])
+        fake_ax.set_title('fake sampler ends: {}'.format(len(fake_len_list)))
+
+        truth_ax = ax[i, 2]
+        truth_ax.bar(truth_len_list, truth_len_counts)
+        truth_ax.set_xlim([min_xlim, max_xlim])
+        truth_ax.set_title('truth sampler ends: {}'.format(len(truth_len_list)))
+        truth_ax = ax[i, 3]
+        truth_ax.bar(truth_len_list, truth_len_counts)
+        truth_ax.set_xlim([min_xlim, max_xlim])
+        truth_ax.set_title('truth sampler ends: {}'.format(len(truth_len_list)))
+
+        i = 2
+        for j, e in enumerate([0, 1]):
+            real_ax = ax[i + j, 0]
+            real_mask = real_x_t0[:, 0] == e
+            real_times = real_x_t0[real_mask][:, 1]
+            real_ax.hist(real_times, range=[0, 1], bins=100)
+            real_ax.set_title('real x node: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                int(e), real_times.mean(), real_times.std()))
+
+            fake_ax = ax[i + j, 1]
+            fake_mask = fake_x_t0[:, 0] == e
+            fake_times = fake_x_t0[fake_mask][:, 1]
+            fake_ax.hist(fake_times, range=[0, 1], bins=100)
+            fake_ax.set_title('fake x node: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                int(e), fake_times.mean(), fake_times.std()))
+
+            truth_ax = ax[i + j, 2]
+            truth_train_mask = truth_train_x_t0[:, 0] == e
+            truth_train_times = truth_train_x_t0[truth_train_mask][:, 1]
+            truth_ax.hist(truth_train_times, range=[0, 1], bins=100)
+            truth_ax.set_title('truth train x node: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                int(e), truth_train_times.mean(), truth_train_times.std()))
+            truth_ax = ax[i + j, 3]
+            truth_test_mask = truth_test_x_t0[:, 0] == e
+            truth_test_times = truth_test_x_t0[truth_test_mask][:, 1]
+            truth_ax.hist(truth_test_times, range=[0, 1], bins=100)
+            truth_ax.set_title('truth test x node: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                int(e), truth_test_times.mean(), truth_test_times.std()))
+
+        i = 4
+        for j, e in enumerate(truth_e_list):
+            real_ax = ax[i + j, 0]
+            real_mask = np.logical_and(real_walks[:, 0] == e[0], real_walks[:, 1] == e[1])
+            real_times = real_walks[real_mask][:, 2]
+            real_ax.hist(real_times, range=[0, 1], bins=100)
+            real_ax.set_title('real start edge: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                [int(v) for v in e], real_times.mean(), real_times.std()))
+
+            fake_ax = ax[i + j, 1]
+            fake_mask = np.logical_and(fake_walks[:, 0] == e[0], fake_walks[:, 1] == e[1])
+            fake_times = fake_walks[fake_mask][:, 2]
+            fake_ax.hist(fake_times, range=[0, 1], bins=100)
+            fake_ax.set_title('fake start edge: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                [int(v) for v in e], fake_times.mean(), fake_times.std()))
+
+            truth_train_ax = ax[i + j, 2]
+            truth_train_mask = np.logical_and(truth_train_walks[:, 0] == e[0],
+                                              truth_train_walks[:, 1] == e[1])
+            truth_train_times = truth_train_walks[truth_train_mask][:, 2]
+            truth_train_ax.hist(truth_train_times, range=[0, 1], bins=100)
+            truth_train_ax.set_title(
+                'truth train start edge: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                    [int(v) for v in e], truth_train_times.mean(), truth_train_times.std()))
+
+            truth_test_ax = ax[i + j, 3]
+            truth_test_mask = np.logical_and(truth_test_walks[:, 0] == e[0], truth_test_walks[:, 1] == e[1])
+            truth_test_times = truth_test_walks[truth_test_mask][:, 2]
+            truth_test_ax.hist(truth_test_times, range=[0, 1], bins=100)
+            truth_test_ax.set_title(
+                'truth test start edge: {} time distribution\nloc: {:.4f} scale: {:.4f}'.format(
+                    [int(v) for v in e], truth_test_times.mean(), truth_test_times.std()))
+
+        plt.tight_layout()
+        plt.savefig('{}/iter_{}_validation.png'.format(output_directory, _it + 1))
+        plt.close()
+
+    except ValueError as e:
+        print(e)
+        log('reshape fake walks got error. Fake graphs shape: {} \n{}'.format(fake_graphs[0].shape, fake_walks[:3]))
+
 if __name__ == '__main__':
 
     # scale = 0.1
