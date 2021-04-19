@@ -14,7 +14,7 @@ You can cite for now.
 The main training and inference codes for different datasets are in `main_*.py` scripts.
 
 There is also codes developed for dynamic graph metric in MMD distance evaluation.
-The discrete-time graph metrics are in `evaluation.py`, 
-and the folder `continuous_time_evaluation_and_DSBM_matlab` contains the continuous-time
+The continuous-time graph metrics are in `evaluation.py` use another library `tacoma`, 
+and the folder `continuous_time_evaluation_and_DSBM_matlab` contains the discrete-time
 graph metrics and also DSBM models. The referred libraries can be found in the folder too.
 Please cite this paper properly if you need to use the evaluation codes.
