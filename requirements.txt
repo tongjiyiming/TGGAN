@@ -1,6 +1,6 @@
 teneto==0.5.0
 tensorflow-gpu==1.14.0
-numpy==1.16.0
+numpy==1.22.0
 func_timeout
 numba
 powerlaw
